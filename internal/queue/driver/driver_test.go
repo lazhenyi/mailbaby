@@ -142,7 +142,7 @@ func TestMemoryQueueViaRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("queue.New with memory driver failed: %v", err)
 	}
-	defer q.Close()
+	defer func() { _ = q.Close() }()
 
 	if q.Driver() != config.DriverMemory {
 		t.Fatalf("expected DriverMemory, got %s", q.Driver())

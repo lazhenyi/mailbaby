@@ -117,7 +117,7 @@ func TestEngineSuccessFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create memory queue: %v", err)
 	}
-	defer q.Close()
+	defer func() { _ = q.Close() }()
 
 	mockSend := newMockSender()
 
@@ -220,7 +220,7 @@ func TestEngineInvalidPayloadAndValidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create memory queue: %v", err)
 	}
-	defer q.Close()
+	defer func() { _ = q.Close() }()
 
 	mockSend := newMockSender()
 	engine, err := New(q, mockSend, cfg)
@@ -251,7 +251,7 @@ func TestEngineInvalidPayloadAndValidation(t *testing.T) {
 	_ = producer.Publish(context.Background(), badRcptMsg)
 
 	_ = engine.Start(context.Background())
-	defer engine.Stop(context.Background())
+	defer func() { _ = engine.Stop(context.Background()) }()
 
 	// Wait for failures to be recorded
 	for i := 0; i < 20; i++ {
@@ -283,7 +283,7 @@ func TestEngineRetryAndDLQ(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create memory queue: %v", err)
 	}
-	defer q.Close()
+	defer func() { _ = q.Close() }()
 
 	mockSend := newMockSender()
 	mockSend.alwaysFail = true
@@ -320,7 +320,7 @@ func TestEngineRetryAndDLQ(t *testing.T) {
 	_ = producer.Publish(context.Background(), exhaustedMsg)
 
 	_ = engine.Start(context.Background())
-	defer engine.Stop(context.Background())
+	defer func() { _ = engine.Stop(context.Background()) }()
 
 	for i := 0; i < 20; i++ {
 		if engine.Stats().TotalDeadLetter >= 1 {
@@ -356,7 +356,7 @@ func TestEngineCustomMiddleware(t *testing.T) {
 	}
 
 	q, _ := queue.New(cfg)
-	defer q.Close()
+	defer func() { _ = q.Close() }()
 	mockSend := newMockSender()
 
 	var order []string
@@ -385,7 +385,7 @@ func TestEngineCustomMiddleware(t *testing.T) {
 	_ = producer.Publish(context.Background(), &queue.Message{ID: "mw-1", Payload: payload, Topic: "test_middleware_queue"})
 
 	_ = engine.Start(context.Background())
-	defer engine.Stop(context.Background())
+	defer func() { _ = engine.Stop(context.Background()) }()
 
 	for i := 0; i < 20; i++ {
 		mu.Lock()
@@ -414,7 +414,7 @@ func TestEngineConcurrencyAndShutdown(t *testing.T) {
 	}
 
 	q, _ := queue.New(cfg)
-	defer q.Close()
+	defer func() { _ = q.Close() }()
 
 	mockSend := newMockSender()
 	mockSend.delaySending = 5 * time.Millisecond
@@ -472,7 +472,7 @@ func TestEngineTransientFailureRetriesThenSucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create memory queue: %v", err)
 	}
-	defer q.Close()
+	defer func() { _ = q.Close() }()
 
 	mockSend := newMockSender()
 	mockSend.failNext = true // first attempt fails, retry should succeed
@@ -497,7 +497,7 @@ func TestEngineTransientFailureRetriesThenSucceeds(t *testing.T) {
 	})
 
 	_ = engine.Start(context.Background())
-	defer engine.Stop(context.Background())
+	defer func() { _ = engine.Stop(context.Background()) }()
 
 	for i := 0; i < 50; i++ {
 		if engine.Stats().TotalSuccess >= 1 {
@@ -537,7 +537,7 @@ func TestEngineRetryExhaustedPublishesDLQOnceAndAcks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create memory queue: %v", err)
 	}
-	defer q.Close()
+	defer func() { _ = q.Close() }()
 
 	mockSend := newMockSender()
 	mockSend.alwaysFail = true
@@ -570,7 +570,7 @@ func TestEngineRetryExhaustedPublishesDLQOnceAndAcks(t *testing.T) {
 	})
 
 	_ = engine.Start(context.Background())
-	defer engine.Stop(context.Background())
+	defer func() { _ = engine.Stop(context.Background()) }()
 
 	for i := 0; i < 50; i++ {
 		if engine.Stats().TotalDeadLetter >= 1 {

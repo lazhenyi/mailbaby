@@ -287,7 +287,7 @@ func (c *natsConsumer) Consume(ctx context.Context, handler queue.Handler, opts 
 	if err != nil {
 		return fmt.Errorf("nats: subscribe failed: %w", err)
 	}
-	defer sub.Unsubscribe()
+	defer func() { _ = sub.Unsubscribe() }()
 
 	concurrency := 1
 	if co.Concurrency > 0 {
@@ -414,7 +414,7 @@ func (c *natsConsumer) Receive(ctx context.Context, opts ...queue.ReceiveOption)
 	if err != nil {
 		return nil, err
 	}
-	defer sub.Unsubscribe()
+	defer func() { _ = sub.Unsubscribe() }()
 
 	nMsg, err := sub.NextMsg(timeout)
 	if err != nil {

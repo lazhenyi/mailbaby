@@ -572,7 +572,7 @@ func (c *redisConsumer) consumePubSub(ctx context.Context, handler queue.Handler
 	}
 
 	pubsub := c.q.client.Subscribe(ctx, key)
-	defer pubsub.Close()
+	defer func() { _ = pubsub.Close() }()
 
 	ch := pubsub.Channel()
 	for {

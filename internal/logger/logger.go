@@ -149,7 +149,7 @@ func Init(cfg config.LogConfig) error {
 	}
 
 	multi := io.MultiWriter(writers...)
-	var finalOut io.Writer = multi
+	finalOut := io.Writer(multi)
 	var asyncW *AsyncWriter
 
 	if cfg.Async {
@@ -328,24 +328,24 @@ func (e *Entry) log(lvl Level, msg string) {
 		buf.WriteByte('\n')
 
 	case string(config.LogFormatLogfmt):
-		buf.WriteString(fmt.Sprintf("time=%q level=%s msg=%q", timeStr, lvl.String(), escapeLogText(msg)))
+		fmt.Fprintf(&buf, "time=%q level=%s msg=%q", timeStr, lvl.String(), escapeLogText(msg))
 		if callerStr != "" {
-			buf.WriteString(fmt.Sprintf(" caller=%q", callerStr))
+			fmt.Fprintf(&buf, " caller=%q", callerStr)
 		}
 		for k, v := range e.fields {
-			buf.WriteString(fmt.Sprintf(" %s=%q", k, escapeLogText(fmt.Sprint(v))))
+			fmt.Fprintf(&buf, " %s=%q", k, escapeLogText(fmt.Sprint(v)))
 		}
 		buf.WriteByte('\n')
 
 	default: // Text / Console
-		buf.WriteString(fmt.Sprintf("[%s] [%s]", timeStr, lvl.String()))
+		fmt.Fprintf(&buf, "[%s] [%s]", timeStr, lvl.String())
 		if callerStr != "" {
-			buf.WriteString(fmt.Sprintf(" [%s]", callerStr))
+			fmt.Fprintf(&buf, " [%s]", callerStr)
 		}
 		if tid, ok := e.fields["trace_id"]; ok {
-			buf.WriteString(fmt.Sprintf(" [trace_id=%v]", escapeLogText(fmt.Sprint(tid))))
+			fmt.Fprintf(&buf, " [trace_id=%v]", escapeLogText(fmt.Sprint(tid)))
 		}
-		buf.WriteString(fmt.Sprintf(" %s", escapeLogText(msg)))
+		fmt.Fprintf(&buf, " %s", escapeLogText(msg))
 
 		// Append extra fields
 		var extra []string

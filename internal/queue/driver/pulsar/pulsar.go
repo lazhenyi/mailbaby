@@ -107,7 +107,7 @@ func (q *PulsarQueue) Consumer() (queue.Consumer, error) {
 		return nil, queue.ErrQueueClosed
 	}
 
-	subType := pulsar.Shared
+	var subType pulsar.SubscriptionType
 	switch strings.ToLower(q.pCfg.SubscriptionType) {
 	case "exclusive":
 		subType = pulsar.Exclusive

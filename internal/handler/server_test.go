@@ -36,7 +36,7 @@ func TestUnifiedHTTPServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to init metrics: %v", err)
 	}
-	defer metrics.Close()
+	defer func() { _ = metrics.Close() }()
 
 	metrics.Get().IncEmailsSent("default", "success")
 
@@ -83,7 +83,7 @@ func TestUnifiedHTTPServer(t *testing.T) {
 	if err := server.Start(ctx); err != nil {
 		t.Fatalf("failed to start server: %v", err)
 	}
-	defer server.Stop(ctx)
+	defer func() { _ = server.Stop(ctx) }()
 
 	// Wait briefly for server startup
 	time.Sleep(60 * time.Millisecond)
@@ -96,7 +96,7 @@ func TestUnifiedHTTPServer(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to get /metrics: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("expected 200 on /metrics, got %d", resp.StatusCode)
@@ -114,7 +114,7 @@ func TestUnifiedHTTPServer(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to get /livez: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("expected 200 on /livez, got %d", resp.StatusCode)
@@ -135,7 +135,7 @@ func TestUnifiedHTTPServer(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to get /readyz: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("expected 200 on /readyz, got %d", resp.StatusCode)
@@ -166,7 +166,7 @@ func TestUnifiedHTTPServer(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to get /readyz: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusServiceUnavailable {
 			t.Fatalf("expected 503 on /readyz when component fails, got %d", resp.StatusCode)
@@ -191,7 +191,7 @@ func TestUnifiedHTTPServer(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to get /healthz: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("expected 200 on /healthz, got %d", resp.StatusCode)
@@ -204,7 +204,7 @@ func TestUnifiedHTTPServer(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to get /debug/pprof/: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("expected 200 on /debug/pprof/, got %d", resp.StatusCode)
@@ -217,7 +217,7 @@ func TestUnifiedHTTPServer(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to get /debug/pprof/cmdline: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
 			t.Errorf("expected 200 on /debug/pprof/cmdline, got %d", resp.StatusCode)
@@ -230,7 +230,7 @@ func TestUnifiedHTTPServer(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to get /api/ping: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		body, _ := io.ReadAll(resp.Body)
 		if string(body) != "pong" {
@@ -253,7 +253,7 @@ func TestUnifiedHTTPServer(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to get /metrics: %v", err)
 		}
-		defer metricsResp.Body.Close()
+		defer func() { _ = metricsResp.Body.Close() }()
 
 		body, _ := io.ReadAll(metricsResp.Body)
 		metricsBody := string(body)

@@ -34,7 +34,7 @@ func runCheck(cfg *config.Config) error {
 		fmt.Println("FAILED")
 		return fmt.Errorf("queue initialization failed: %w", err)
 	}
-	defer q.Close()
+	defer func() { _ = q.Close() }()
 
 	if err := q.Ping(ctx); err != nil {
 		fmt.Printf("FAILED (%v)\n", err)
@@ -49,7 +49,7 @@ func runCheck(cfg *config.Config) error {
 		fmt.Println("FAILED")
 		return fmt.Errorf("smtp accounts initialization failed: %w", err)
 	}
-	defer mailSender.Close()
+	defer func() { _ = mailSender.Close() }()
 	fmt.Printf("OK (Accounts: %v)\n", mailSender.AccountNames())
 
 	// 4. Check HTTP Server Bind Address

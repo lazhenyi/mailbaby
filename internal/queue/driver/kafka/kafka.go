@@ -375,7 +375,7 @@ func (c *kafkaConsumer) Consume(ctx context.Context, handler queue.Handler, opts
 		wg.Add(1)
 		go func(r *kafka.Reader) {
 			defer wg.Done()
-			defer r.Close()
+			defer func() { _ = r.Close() }()
 
 			for {
 				select {
@@ -471,7 +471,7 @@ func (c *kafkaConsumer) Receive(ctx context.Context, opts ...queue.ReceiveOption
 		Dialer:      c.q.dialer,
 		StartOffset: kafka.LastOffset,
 	})
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	kMsg, err := reader.FetchMessage(ctxTimeout)
 	if err != nil {

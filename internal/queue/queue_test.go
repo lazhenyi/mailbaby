@@ -153,7 +153,7 @@ func TestRegistry(t *testing.T) {
 	if q.Driver() != config.DriverMemory {
 		t.Fatalf("expected DriverMemory, got %s", q.Driver())
 	}
-	defer q.Close()
+	defer func() { _ = q.Close() }()
 
 	// Test New with unregistered driver
 	cfgUnregistered := &config.Config{
@@ -181,7 +181,7 @@ func TestRegistry(t *testing.T) {
 
 func TestMemoryQueue_PublishConsume(t *testing.T) {
 	q := NewMemoryQueue("test_mail_queue", 100, nil)
-	defer q.Close()
+	defer func() { _ = q.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -250,7 +250,7 @@ func TestMemoryQueue_PublishConsume(t *testing.T) {
 
 func TestMemoryQueue_Receive(t *testing.T) {
 	q := NewMemoryQueue("test_receive_queue", 10, nil)
-	defer q.Close()
+	defer func() { _ = q.Close() }()
 
 	ctx := context.Background()
 	producer, _ := q.Producer()

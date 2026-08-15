@@ -90,7 +90,7 @@ func BuildMIME(email *Email, defaultFrom, defaultFromName string) ([]byte, error
 		if host == "" {
 			host = "mailbaby.local"
 		}
-		buf.WriteString(fmt.Sprintf("Message-ID: <%s@%s>\r\n", generateRandomID(), host))
+		fmt.Fprintf(&buf, "Message-ID: <%s@%s>\r\n", generateRandomID(), host)
 	}
 
 	// 8. Add MIME-Version
@@ -108,7 +108,7 @@ func BuildMIME(email *Email, defaultFrom, defaultFromName string) ([]byte, error
 			strings.EqualFold(k, "MIME-Version") || strings.EqualFold(k, "Content-Type") {
 			continue
 		}
-		buf.WriteString(fmt.Sprintf("%s: %s\r\n", k, sanitizeHeaderValue(encodeHeader(v))))
+		fmt.Fprintf(&buf, "%s: %s\r\n", k, sanitizeHeaderValue(encodeHeader(v)))
 	}
 
 	// 10. Split attachments into regular and inline
@@ -125,7 +125,7 @@ func BuildMIME(email *Email, defaultFrom, defaultFromName string) ([]byte, error
 	// Case A: Has regular attachments -> outermost is multipart/mixed
 	if len(regularAttachments) > 0 {
 		mixedWriter := multipart.NewWriter(&buf)
-		buf.WriteString(fmt.Sprintf("Content-Type: multipart/mixed; boundary=%q\r\n\r\n", mixedWriter.Boundary()))
+		fmt.Fprintf(&buf, "Content-Type: multipart/mixed; boundary=%q\r\n\r\n", mixedWriter.Boundary())
 
 		// Write body part (which could be related, alternative, or simple text/html)
 		bodyPartHeader := make(textproto.MIMEHeader)
@@ -164,7 +164,7 @@ func BuildMIME(email *Email, defaultFrom, defaultFromName string) ([]byte, error
 	// Case B: Has inline attachments but no regular attachments -> outermost is multipart/related
 	if len(inlineAttachments) > 0 {
 		relWriter := multipart.NewWriter(&buf)
-		buf.WriteString(fmt.Sprintf("Content-Type: multipart/related; boundary=%q\r\n\r\n", relWriter.Boundary()))
+		fmt.Fprintf(&buf, "Content-Type: multipart/related; boundary=%q\r\n\r\n", relWriter.Boundary())
 
 		if err := writeRelatedBody(relWriter, email, inlineAttachments); err != nil {
 			return nil, err
@@ -176,7 +176,7 @@ func BuildMIME(email *Email, defaultFrom, defaultFromName string) ([]byte, error
 	if email.TextBody != "" && email.HTMLBody != "" {
 		// multipart/alternative
 		altWriter := multipart.NewWriter(&buf)
-		buf.WriteString(fmt.Sprintf("Content-Type: multipart/alternative; boundary=%q\r\n\r\n", altWriter.Boundary()))
+		fmt.Fprintf(&buf, "Content-Type: multipart/alternative; boundary=%q\r\n\r\n", altWriter.Boundary())
 		if err := writeAlternativeBodyParts(altWriter, email); err != nil {
 			return nil, err
 		}

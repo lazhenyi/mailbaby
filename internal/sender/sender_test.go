@@ -271,7 +271,7 @@ func TestDialExplicitSTARTTLSRejectedWhenUnsupported(t *testing.T) {
 
 	host, portStr, _ := net.SplitHostPort(mockServer.addr)
 	var port int
-	fmt.Sscanf(portStr, "%d", &port)
+	_, _ = fmt.Sscanf(portStr, "%d", &port)
 
 	cfg := config.SmtpAccountConfig{
 		Host:       host,
@@ -294,7 +294,7 @@ func TestDialAutoFallsBackWithoutStarttls(t *testing.T) {
 
 	host, portStr, _ := net.SplitHostPort(mockServer.addr)
 	var port int
-	fmt.Sscanf(portStr, "%d", &port)
+	_, _ = fmt.Sscanf(portStr, "%d", &port)
 
 	cfg := config.SmtpAccountConfig{
 		Host:       host,
@@ -353,7 +353,7 @@ func (s *mockSMTPServer) serve() {
 }
 
 func (s *mockSMTPServer) handleConn(conn net.Conn) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	reader := bufio.NewReader(conn)
 	writer := bufio.NewWriter(conn)
 
@@ -465,7 +465,7 @@ func TestSenderIntegrationWithMockServer(t *testing.T) {
 
 	host, portStr, _ := net.SplitHostPort(mockServer.addr)
 	var port int
-	fmt.Sscanf(portStr, "%d", &port)
+	_, _ = fmt.Sscanf(portStr, "%d", &port)
 
 	// Configure multiple SMTP accounts pointing to mock server
 	smtpCfg := config.SmtpConfig{
@@ -503,7 +503,7 @@ func TestSenderIntegrationWithMockServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create Sender: %v", err)
 	}
-	defer mailSender.Close()
+	defer func() { _ = mailSender.Close() }()
 
 	ctx := context.Background()
 

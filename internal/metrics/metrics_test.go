@@ -20,7 +20,7 @@ func TestMetricsRecording(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create metrics: %v", err)
 	}
-	defer m.Close()
+	defer func() { _ = m.Close() }()
 
 	// 1. Record Email metrics
 	m.IncEmailsSent("default", "success")
@@ -104,7 +104,7 @@ func TestStatsDClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create UDP listener: %v", err)
 	}
-	defer udpLn.Close()
+	defer func() { _ = udpLn.Close() }()
 
 	udpAddr := udpLn.LocalAddr().String()
 

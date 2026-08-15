@@ -223,7 +223,7 @@ func (q *RabbitMQQueue) Stats(ctx context.Context) (queue.Stats, error) {
 		return queue.Stats{}, queue.ErrQueueClosed
 	}
 
-	info, err := q.ch.QueueInspect(q.rCfg.Queue)
+	info, err := q.ch.QueueDeclarePassive(q.rCfg.Queue, false, false, false, false, nil)
 	if err != nil {
 		return queue.Stats{
 			Driver:    config.DriverRabbitMQ,

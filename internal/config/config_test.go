@@ -857,7 +857,7 @@ func TestLoadFromFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp config: %v", err)
 	}
-	defer os.Remove(tempFile.Name())
+	defer func() { _ = os.Remove(tempFile.Name()) }()
 
 	content := `
 app:
@@ -911,7 +911,7 @@ observability:
 	if _, err := tempFile.Write([]byte(content)); err != nil {
 		t.Fatalf("failed to write temp file: %v", err)
 	}
-	tempFile.Close()
+	_ = tempFile.Close()
 
 	cfg, err := Load(tempFile.Name())
 	if err != nil {

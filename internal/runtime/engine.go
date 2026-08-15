@@ -39,7 +39,6 @@ type Engine struct {
 
 	cancelFunc context.CancelFunc
 	wg         sync.WaitGroup
-	mu         sync.RWMutex
 }
 
 // New creates and initializes a new Runtime Engine.

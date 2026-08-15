@@ -45,7 +45,6 @@ func (e *StdoutSpanExporter) Close() error {
 type TracerProvider struct {
 	cfg      config.TracingConfig
 	exporter SpanExporter
-	mu       sync.RWMutex
 }
 
 var (

@@ -35,7 +35,7 @@ func runSend(cfg *config.Config, args []string) error {
 	if err != nil {
 		return fmt.Errorf("cmd: failed to initialize sender: %w", err)
 	}
-	defer mailSender.Close()
+	defer func() { _ = mailSender.Close() }()
 
 	email := sender.NewEmail().
 		SetAccount(account).
