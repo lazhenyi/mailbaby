@@ -10,9 +10,34 @@ import (
 	"mime/multipart"
 	"net/textproto"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 )
+
+// headerFieldNameRe matches RFC 5322 field-name: printable US-ASCII
+// excluding colon (obs-ftext: %d33-57 / %d59-126).
+var headerFieldNameRe = regexp.MustCompile(`^[\x21-\x39\x3B-\x7E]+$`)
+
+// validHeaderFieldName reports whether s is a safe RFC 5322 header field name.
+func validHeaderFieldName(s string) bool {
+	return headerFieldNameRe.MatchString(s)
+}
+
+// sanitizeHeaderValue strips CR/LF so no header value can inject new fields.
+func sanitizeHeaderValue(v string) string {
+	if !strings.ContainsAny(v, "\r\n") {
+		return v
+	}
+	var sb strings.Builder
+	for _, r := range v {
+		if r == '\r' || r == '\n' {
+			continue
+		}
+		sb.WriteRune(r)
+	}
+	return sb.String()
+}
 
 // BuildMIME compiles an Email struct into an RFC 5322 MIME-compliant byte slice.
 func BuildMIME(email *Email, defaultFrom, defaultFromName string) ([]byte, error) {
@@ -73,13 +98,17 @@ func BuildMIME(email *Email, defaultFrom, defaultFromName string) ([]byte, error
 
 	// 9. Custom Headers
 	for k, v := range email.Headers {
+		if !validHeaderFieldName(k) {
+			return nil, fmt.Errorf("sender: invalid custom header name %q", k)
+		}
 		if strings.EqualFold(k, "From") || strings.EqualFold(k, "To") ||
 			strings.EqualFold(k, "Cc") || strings.EqualFold(k, "Bcc") ||
 			strings.EqualFold(k, "Subject") || strings.EqualFold(k, "Date") ||
+			strings.EqualFold(k, "Reply-To") ||
 			strings.EqualFold(k, "MIME-Version") || strings.EqualFold(k, "Content-Type") {
 			continue
 		}
-		buf.WriteString(fmt.Sprintf("%s: %s\r\n", k, encodeHeader(v)))
+		buf.WriteString(fmt.Sprintf("%s: %s\r\n", k, sanitizeHeaderValue(encodeHeader(v))))
 	}
 
 	// 10. Split attachments into regular and inline

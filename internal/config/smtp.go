@@ -49,8 +49,9 @@ type SmtpPoolConfig struct {
 }
 
 type SmtpRateLimitConfig struct {
-	EmailsPerSecond       int `mapstructure:"emails_per_second" json:"emails_per_second" yaml:"emails_per_second"`
-	MaxRecipientsPerEmail int `mapstructure:"max_recipients_per_email" json:"max_recipients_per_email" yaml:"max_recipients_per_email"`
+	EmailsPerSecond       int   `mapstructure:"emails_per_second" json:"emails_per_second" yaml:"emails_per_second"`
+	MaxRecipientsPerEmail int   `mapstructure:"max_recipients_per_email" json:"max_recipients_per_email" yaml:"max_recipients_per_email"`
+	EmailSizeLimit        int64 `mapstructure:"email_size_limit" json:"email_size_limit" yaml:"email_size_limit"` // Maximum email payload size in bytes; 0 = unlimited
 }
 
 // SmtpAccountConfig defines the configuration for a single SMTP server account.
@@ -110,6 +111,18 @@ func (a *SmtpAccountConfig) ApplyDefaults() {
 	}
 	if a.RateLimit.MaxRecipientsPerEmail <= 0 {
 		a.RateLimit.MaxRecipientsPerEmail = 50
+	}
+	// A negative email size limit falls back to the 15MB default;
+	// zero explicitly means "unlimited".
+	if a.RateLimit.EmailSizeLimit < 0 {
+		a.RateLimit.EmailSizeLimit = 15 * 1024 * 1024
+	}
+	// Clamp the rate limit so the token channel cannot be sized absurdly.
+	if a.RateLimit.EmailsPerSecond < 0 {
+		a.RateLimit.EmailsPerSecond = 0
+	}
+	if a.RateLimit.EmailsPerSecond > 10000 {
+		a.RateLimit.EmailsPerSecond = 10000
 	}
 }
 

@@ -2,6 +2,7 @@ package sender
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"mailbaby/internal/config"
 )
@@ -197,6 +199,114 @@ func TestAuthBuilderAndLoginAuth(t *testing.T) {
 	if none != nil {
 		t.Error("expected nil for None auth")
 	}
+}
+
+func TestMIMECustomHeaderInjectionRejected(t *testing.T) {
+	base := NewEmail().SetFrom("sender@example.com").AddTo("user@example.com").SetSubject("OK")
+	base.Headers["X-Evil\r\nBcc: victim@example.com"] = "v"
+
+	if _, err := BuildMIME(base, "fallback@example.com", ""); err == nil {
+		t.Fatal("expected BuildMIME to reject a header name containing CRLF")
+	}
+
+	base2 := NewEmail().SetFrom("sender@example.com").AddTo("user@example.com").SetSubject("OK")
+	base2.Headers["X-Bad:Key"] = "v"
+	if _, err := BuildMIME(base2, "fallback@example.com", ""); err == nil {
+		t.Fatal("expected BuildMIME to reject a header name containing ':'")
+	}
+}
+
+func TestMIMECustomHeaderValueSanitized(t *testing.T) {
+	e := NewEmail().SetFrom("sender@example.com").AddTo("user@example.com").SetSubject("OK")
+	e.SetHeader("X-Note", "line1\r\nBcc: victim@example.com")
+
+	raw, err := BuildMIME(e, "fallback@example.com", "")
+	if err != nil {
+		t.Fatalf("BuildMIME failed: %v", err)
+	}
+	if bytes.Contains(raw, []byte("\r\nBcc:")) {
+		t.Errorf("CRLF-injected header leaked into message:\n%s", raw)
+	}
+}
+
+func TestPoolAcquireAfterCloseReturnsError(t *testing.T) {
+	pool := NewSmtpConnPool(config.SmtpAccountConfig{})
+	_ = pool.Close()
+
+	if _, err := pool.Acquire(context.Background()); !errors.Is(err, ErrPoolClosed) {
+		t.Errorf("expected ErrPoolClosed, got %v", err)
+	}
+}
+
+func TestPoolAcquireConcurrentCloseNoPanic(t *testing.T) {
+	pool := NewSmtpConnPool(config.SmtpAccountConfig{
+		Host: "127.0.0.1", Port: 1,
+		ConnectTimeout: 50 * time.Millisecond,
+		Pool: config.SmtpPoolConfig{
+			MaxIdleConns: 2,
+			MaxOpenConns: 2,
+		},
+	})
+
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = pool.Acquire(context.Background())
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_ = pool.Close()
+	}()
+	wg.Wait()
+	// Test passes if no panic occurred (nil-client deref / double close).
+}
+
+func TestDialExplicitSTARTTLSRejectedWhenUnsupported(t *testing.T) {
+	mockServer := newMockSMTPServer(t)
+	defer mockServer.close()
+
+	host, portStr, _ := net.SplitHostPort(mockServer.addr)
+	var port int
+	fmt.Sscanf(portStr, "%d", &port)
+
+	cfg := config.SmtpAccountConfig{
+		Host:       host,
+		Port:       port,
+		Encryption: config.SmtpEncryptionSTARTTLS,
+	}
+
+	_, err := Dial(context.Background(), cfg)
+	if err == nil {
+		t.Fatal("expected Dial to fail when explicit STARTTLS is not supported by the server")
+	}
+	if !strings.Contains(err.Error(), "STARTTLS") {
+		t.Errorf("expected a STARTTLS-related error, got %v", err)
+	}
+}
+
+func TestDialAutoFallsBackWithoutStarttls(t *testing.T) {
+	mockServer := newMockSMTPServer(t)
+	defer mockServer.close()
+
+	host, portStr, _ := net.SplitHostPort(mockServer.addr)
+	var port int
+	fmt.Sscanf(portStr, "%d", &port)
+
+	cfg := config.SmtpAccountConfig{
+		Host:       host,
+		Port:       port,
+		Encryption: config.SmtpEncryptionAuto, // non-465 port infers STARTTLS, server lacks it
+	}
+
+	client, err := Dial(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Auto mode should keep working without STARTTLS, got: %v", err)
+	}
+	_ = client.Close()
 }
 
 // mockSMTPServer implements a lightweight mock SMTP server for integration tests.

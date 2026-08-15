@@ -71,14 +71,20 @@ func newAccountSender(name string, cfg config.SmtpAccountConfig) *accountSender 
 		pool: NewSmtpConnPool(cfg),
 	}
 
-	// Initialize rate limiter if configured (> 0 emails per second)
+	// Initialize rate limiter if configured (> 0 emails per second).
+	// The token capacity is capped to bound memory usage; refill continues at
+	// the configured rate afterwards.
 	if cfg.RateLimit.EmailsPerSecond > 0 {
 		rate := cfg.RateLimit.EmailsPerSecond
-		as.rateLimiter = make(chan struct{}, rate)
+		capacity := rate
+		if capacity > 1000 {
+			capacity = 1000
+		}
+		as.rateLimiter = make(chan struct{}, capacity)
 		as.stopRate = make(chan struct{})
 
 		// Prefill bucket
-		for i := 0; i < rate; i++ {
+		for i := 0; i < capacity; i++ {
 			as.rateLimiter <- struct{}{}
 		}
 
@@ -121,7 +127,6 @@ func (a *accountSender) Send(ctx context.Context, email *Email) error {
 	}
 
 	span.SetAttribute("email.account", a.name)
-	span.SetAttribute("email.subject", email.Subject)
 
 	if err := email.Validate(); err != nil {
 		atomic.AddInt64(&a.totalFailed, 1)
@@ -145,6 +150,16 @@ func (a *accountSender) Send(ctx context.Context, email *Email) error {
 		err := fmt.Errorf("%w: got %d recipients, limit is %d", ErrMaxRecipientsExceeded, len(recipients), maxRcpt)
 		span.RecordError(err)
 		return err
+	}
+
+	// Enforce maximum email size limit before building the MIME payload.
+	if limit := a.cfg.RateLimit.EmailSizeLimit; limit > 0 {
+		if data, err := email.ToJSON(); err == nil && int64(len(data)) > limit {
+			atomic.AddInt64(&a.totalFailed, 1)
+			sizeErr := fmt.Errorf("%w: payload %d bytes exceeds limit %d", ErrEmailTooLarge, len(data), limit)
+			span.RecordError(sizeErr)
+			return sizeErr
+		}
 	}
 
 	// Wait for rate limiter token if configured
@@ -191,7 +206,6 @@ func (a *accountSender) Send(ctx context.Context, email *Email) error {
 		span.RecordError(sendErr)
 		logger.Get().WithContext(ctx).WithFields(logger.Fields{
 			"account": a.name,
-			"subject": email.Subject,
 			"rcpt":    len(recipients),
 			"error":   sendErr.Error(),
 		}).Error("failed to deliver email via SMTP")
@@ -201,7 +215,6 @@ func (a *accountSender) Send(ctx context.Context, email *Email) error {
 	atomic.AddInt64(&a.totalSent, 1)
 	logger.Get().WithContext(ctx).WithFields(logger.Fields{
 		"account": a.name,
-		"subject": email.Subject,
 		"rcpt":    len(recipients),
 		"bytes":   len(msgBytes),
 	}).Debug("email delivered successfully via SMTP")
@@ -227,10 +240,16 @@ func (a *accountSender) Close() error {
 	return a.pool.Close()
 }
 
+// maxBatchConcurrencyUpper is a hard cap for concurrent sends in SendBatch
+// to avoid unbounded goroutine/connection explosion on very large batches.
+const maxBatchConcurrencyUpper = 512
+const minBatchConcurrency = 16
+
 // MultiAccountSender manages sending operations across multiple SMTP accounts.
 type MultiAccountSender struct {
 	accounts map[string]*accountSender
 	mu       sync.RWMutex
+	batchSem chan struct{}
 }
 
 // New creates a new Sender instance using the provided SmtpConfig.
@@ -240,8 +259,26 @@ func New(cfg config.SmtpConfig) (Sender, error) {
 	}
 
 	m := &MultiAccountSender{
-		accounts: make(map[string]*accountSender),
+		accounts: make(map[string]*accountSender, len(cfg)),
 	}
+
+	// Bound SendBatch parallelism by the total number of SMTP connections the
+	// pools can hold (each account defaults to max_open_conns=20).
+	batchLimit := 0
+	for _, accCfg := range cfg {
+		pool := accCfg.Pool.MaxOpenConns
+		if pool <= 0 {
+			pool = 20
+		}
+		batchLimit += pool
+	}
+	if batchLimit < minBatchConcurrency {
+		batchLimit = minBatchConcurrency
+	}
+	if batchLimit > maxBatchConcurrencyUpper {
+		batchLimit = maxBatchConcurrencyUpper
+	}
+	m.batchSem = make(chan struct{}, batchLimit)
 
 	for name, accCfg := range cfg {
 		m.accounts[strings.ToLower(name)] = newAccountSender(name, accCfg)
@@ -280,7 +317,7 @@ func (m *MultiAccountSender) Send(ctx context.Context, email *Email) error {
 	return acc.Send(ctx, email)
 }
 
-// SendBatch delivers multiple email messages concurrently using a worker pool.
+// SendBatch delivers multiple email messages concurrently using a bounded worker pool.
 func (m *MultiAccountSender) SendBatch(ctx context.Context, emails []*Email) []error {
 	errorsList := make([]error, len(emails))
 	var wg sync.WaitGroup
@@ -289,6 +326,13 @@ func (m *MultiAccountSender) SendBatch(ctx context.Context, emails []*Email) []e
 		wg.Add(1)
 		go func(idx int, item *Email) {
 			defer wg.Done()
+			select {
+			case m.batchSem <- struct{}{}:
+				defer func() { <-m.batchSem }()
+			case <-ctx.Done():
+				errorsList[idx] = ctx.Err()
+				return
+			}
 			errorsList[idx] = m.Send(ctx, item)
 		}(i, mailItem)
 	}

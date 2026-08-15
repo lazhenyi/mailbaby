@@ -17,9 +17,6 @@ var (
 	// ErrInvalidRecipient is returned when any recipient email address is malformed.
 	ErrInvalidRecipient = errors.New("sender: invalid recipient email address")
 
-	// ErrEmptySubject is returned when email subject validation fails.
-	ErrEmptySubject = errors.New("sender: email subject cannot be empty")
-
 	// ErrMaxRecipientsExceeded is returned when the number of recipients exceeds the configured rate limit.
 	ErrMaxRecipientsExceeded = errors.New("sender: number of recipients exceeds account limit")
 
@@ -37,4 +34,7 @@ var (
 
 	// ErrRateLimitExceeded is returned when sending rate exceeds account rate limit.
 	ErrRateLimitExceeded = errors.New("sender: rate limit exceeded")
+
+	// ErrEmailTooLarge is returned when the email payload exceeds the configured size limit.
+	ErrEmailTooLarge = errors.New("sender: email payload exceeds configured size limit")
 )

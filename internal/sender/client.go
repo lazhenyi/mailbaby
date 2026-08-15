@@ -54,12 +54,20 @@ func Dial(ctx context.Context, cfg config.SmtpAccountConfig) (*SmtpClient, error
 		connectTimeout = 10 * time.Second
 	}
 
+	keepAlive := cfg.KeepAlive
+	if keepAlive <= 0 {
+		keepAlive = 30 * time.Second
+	}
+
 	dialer := &net.Dialer{
-		Timeout: connectTimeout,
+		Timeout:   connectTimeout,
+		KeepAlive: keepAlive,
 	}
 
 	encryption := cfg.Encryption
+	explicitEncryption := true
 	if encryption == "" || strings.EqualFold(string(encryption), string(config.SmtpEncryptionAuto)) {
+		explicitEncryption = false
 		if cfg.Port == 465 {
 			encryption = config.SmtpEncryptionSSL
 		} else {
@@ -116,6 +124,16 @@ func Dial(ctx context.Context, cfg config.SmtpAccountConfig) (*SmtpClient, error
 				return nil, fmt.Errorf("sender: STARTTLS failed: %w", err)
 			}
 			metrics.Get().ObserveSmtpTLSHandshake(cfg.From, time.Since(tlsStart))
+		} else if explicitEncryption {
+			_ = client.Close()
+			err := errors.New("sender: server does not advertise STARTTLS but encryption is required")
+			span.RecordError(err)
+			return nil, err
+		} else {
+			logger.Get().WithFields(logger.Fields{
+				"host": cfg.Host,
+				"port": cfg.Port,
+			}).Warn("SMTP server does not advertise STARTTLS; continuing without encryption")
 		}
 
 	case "NONE":

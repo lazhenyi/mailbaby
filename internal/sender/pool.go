@@ -81,6 +81,11 @@ func (p *SmtpConnPool) Acquire(ctx context.Context) (*SmtpClient, error) {
 	for {
 		select {
 		case client := <-p.idleConns:
+			// A nil value is received when the idle channel has been closed
+			// concurrently by Close().
+			if client == nil {
+				return nil, ErrPoolClosed
+			}
 			// Check if idle connection has timed out
 			if time.Since(client.LastUsed()) > p.idleTimeout {
 				_ = client.Close()
@@ -123,6 +128,9 @@ createNew:
 
 	case client := <-p.idleConns:
 		// Another goroutine released a connection while we waited
+		if client == nil {
+			return nil, ErrPoolClosed
+		}
 		if time.Since(client.LastUsed()) > p.idleTimeout || client.Reset() != nil {
 			_ = client.Close()
 			p.decrementActive()
