@@ -56,7 +56,6 @@ func TracingMiddleware(driver, topic string) Middleware {
 
 			if email != nil {
 				span.SetAttribute("email.account", email.Account)
-				span.SetAttribute("email.subject", email.Subject)
 				span.SetAttribute("email.recipients_count", len(email.AllRecipients()))
 			}
 
@@ -118,13 +117,11 @@ func LoggingMiddleware() Middleware {
 
 			account := "default"
 			rcptCount := 0
-			subject := ""
 			if email != nil {
 				if email.Account != "" {
 					account = email.Account
 				}
 				rcptCount = len(email.AllRecipients())
-				subject = email.Subject
 			}
 
 			err := next(ctx, msg, email)
@@ -134,7 +131,6 @@ func LoggingMiddleware() Middleware {
 				"msg_id":     msgID,
 				"account":    account,
 				"rcpt_count": rcptCount,
-				"subject":    subject,
 				"duration":   duration.String(),
 			})
 

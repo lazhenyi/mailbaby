@@ -354,7 +354,9 @@ func (c *pulsarConsumer) processMessage(ctx context.Context, pMsg pulsar.Message
 	if err == nil && !qMsg.IsAcknowledged() {
 		_ = qMsg.Ack(ctx)
 	} else if err != nil && !qMsg.IsAcknowledged() {
-		_ = qMsg.Nack(ctx, true)
+		// Retries are handled inside the runtime engine; ack so the message
+		// is not redelivered indefinitely.
+		_ = qMsg.Ack(ctx)
 	}
 }
 

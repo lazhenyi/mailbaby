@@ -118,10 +118,10 @@ func setupKafkaTransport(kCfg config.KafkaConfig) (*kafka.Dialer, *kafka.Transpo
 	}
 
 	transport := &kafka.Transport{
-		TLS:           tlsConfig,
-		SASL:          mechanism,
-		ClientID:      kCfg.ClientID,
-		Dial:          dialer.DialFunc,
+		TLS:      tlsConfig,
+		SASL:     mechanism,
+		ClientID: kCfg.ClientID,
+		Dial:     dialer.DialFunc,
 	}
 
 	return dialer, transport, nil
@@ -192,10 +192,10 @@ func (q *KafkaQueue) Stats(ctx context.Context) (queue.Stats, error) {
 		Total:     atomic.LoadInt64(&q.totalSent),
 		Consumers: int(atomic.LoadInt64(&q.activeCons)),
 		Extra: map[string]any{
-			"group_id":       q.kCfg.Topic,
-			"writer_writes":  wStats.Writes,
+			"group_id":        q.kCfg.GroupID,
+			"writer_writes":   wStats.Writes,
 			"writer_messages": wStats.Messages,
-			"writer_errors":  wStats.Errors,
+			"writer_errors":   wStats.Errors,
 		},
 	}, nil
 }
@@ -444,7 +444,9 @@ func (c *kafkaConsumer) processMessage(ctx context.Context, r *kafka.Reader, kMs
 	if err == nil && !msg.IsAcknowledged() {
 		_ = msg.Ack(ctx)
 	} else if err != nil && !msg.IsAcknowledged() {
-		_ = msg.Nack(ctx, true)
+		// Retries are handled inside the runtime engine; commit the offset to
+		// avoid redelivering the exhausted message.
+		_ = msg.Ack(ctx)
 	}
 }
 

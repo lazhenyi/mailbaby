@@ -123,42 +123,51 @@ func (m *Message) SetNackFunc(fn func(ctx context.Context, requeue bool) error) 
 }
 
 // Ack acknowledges that the message was processed successfully.
+// The ack callback is invoked without holding the message lock, so callbacks
+// may safely call clone/read methods on the message itself.
 func (m *Message) Ack(ctx context.Context) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	if m.acknowledged {
+		m.mu.Unlock()
 		return nil
 	}
-
 	if m.ackFn == nil {
+		m.mu.Unlock()
 		return ErrAckNotSupported
 	}
+	m.acknowledged = true
+	m.mu.Unlock()
 
 	if err := m.ackFn(ctx); err != nil {
+		m.mu.Lock()
+		m.acknowledged = false
+		m.mu.Unlock()
 		return err
 	}
-	m.acknowledged = true
 	return nil
 }
 
 // Nack rejects the message, optionally requesting it to be requeued.
+// The nack callback is invoked without holding the message lock.
 func (m *Message) Nack(ctx context.Context, requeue bool) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	if m.acknowledged {
+		m.mu.Unlock()
 		return nil
 	}
-
 	if m.nackFn == nil {
+		m.mu.Unlock()
 		return ErrNackNotSupported
 	}
+	m.acknowledged = true
+	m.mu.Unlock()
 
 	if err := m.nackFn(ctx, requeue); err != nil {
+		m.mu.Lock()
+		m.acknowledged = false
+		m.mu.Unlock()
 		return err
 	}
-	m.acknowledged = true
 	return nil
 }
 

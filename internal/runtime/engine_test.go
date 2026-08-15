@@ -457,3 +457,146 @@ func TestEngineConcurrencyAndShutdown(t *testing.T) {
 		t.Errorf("expected %d messages sent, got %d", totalMessages, mockSend.getSentCount())
 	}
 }
+
+func TestEngineTransientFailureRetriesThenSucceeds(t *testing.T) {
+	cfg := &config.Config{
+		Queue: config.QueueConfig{
+			Driver:        config.DriverMemory,
+			Concurrency:   1,
+			MaxRetries:    3,
+			RetryInterval: 10 * time.Millisecond,
+		},
+	}
+
+	q, err := queue.New(cfg)
+	if err != nil {
+		t.Fatalf("failed to create memory queue: %v", err)
+	}
+	defer q.Close()
+
+	mockSend := newMockSender()
+	mockSend.failNext = true // first attempt fails, retry should succeed
+
+	engine, err := New(q, mockSend, cfg)
+	if err != nil {
+		t.Fatalf("failed to create engine: %v", err)
+	}
+
+	payload, _ := sender.NewEmail().
+		SetFrom("test@example.com").
+		AddTo("t@example.com").
+		SetSubject("Transient").
+		ToJSON()
+
+	producer, _ := q.Producer()
+	_ = producer.Publish(context.Background(), &queue.Message{
+		ID:        "retry-transient",
+		Payload:   payload,
+		Topic:     "test_retry_queue",
+		Timestamp: time.Now(),
+	})
+
+	_ = engine.Start(context.Background())
+	defer engine.Stop(context.Background())
+
+	for i := 0; i < 50; i++ {
+		if engine.Stats().TotalSuccess >= 1 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	stats := engine.Stats()
+	if stats.TotalSuccess != 1 {
+		t.Fatalf("expected TotalSuccess=1 after retry, got %d", stats.TotalSuccess)
+	}
+	// mockSender only records successful sends; a fail-then-succeed flow must
+	// have exactly one recorded delivery but one counted retry.
+	if mockSend.getSentCount() != 1 {
+		t.Errorf("expected 1 successful send, got %d", mockSend.getSentCount())
+	}
+	if stats.TotalRetried != 1 {
+		t.Errorf("expected TotalRetried=1, got %d", stats.TotalRetried)
+	}
+	if stats.TotalDeadLetter != 0 {
+		t.Errorf("expected no DLQ for transient failure, got %d", stats.TotalDeadLetter)
+	}
+}
+
+func TestEngineRetryExhaustedPublishesDLQOnceAndAcks(t *testing.T) {
+	cfg := &config.Config{
+		Queue: config.QueueConfig{
+			Driver:        config.DriverMemory,
+			Concurrency:   1,
+			MaxRetries:    2,
+			RetryInterval: 5 * time.Millisecond,
+		},
+	}
+
+	q, err := queue.New(cfg)
+	if err != nil {
+		t.Fatalf("failed to create memory queue: %v", err)
+	}
+	defer q.Close()
+
+	mockSend := newMockSender()
+	mockSend.alwaysFail = true
+
+	dlqProd := &mockProducer{}
+	var errorHandlerCount int32
+
+	engine, err := New(q, mockSend, cfg,
+		WithDLQ(dlqProd, "test_dlq_queue"),
+		WithErrorHandler(func(ctx context.Context, msg *queue.Message, email *sender.Email, err error) {
+			atomic.AddInt32(&errorHandlerCount, 1)
+		}),
+	)
+	if err != nil {
+		t.Fatalf("failed to create engine: %v", err)
+	}
+
+	payload, _ := sender.NewEmail().
+		SetFrom("test@example.com").
+		AddTo("t@example.com").
+		SetSubject("Exhausted").
+		ToJSON()
+
+	producer, _ := q.Producer()
+	_ = producer.Publish(context.Background(), &queue.Message{
+		ID:        "retry-exhausted",
+		Payload:   payload,
+		Topic:     "test_retry_queue",
+		Timestamp: time.Now(),
+	})
+
+	_ = engine.Start(context.Background())
+	defer engine.Stop(context.Background())
+
+	for i := 0; i < 50; i++ {
+		if engine.Stats().TotalDeadLetter >= 1 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	stats := engine.Stats()
+	if stats.TotalDeadLetter != 1 {
+		t.Fatalf("expected TotalDeadLetter=1, got %d", stats.TotalDeadLetter)
+	}
+	if stats.TotalFailed != 1 {
+		t.Errorf("expected TotalFailed=1, got %d", stats.TotalFailed)
+	}
+
+	dlqProd.mu.Lock()
+	dlqCount := len(dlqProd.publishedMsgs)
+	dlqProd.mu.Unlock()
+	if dlqCount != 1 {
+		t.Errorf("expected exactly 1 DLQ message, got %d", dlqCount)
+	}
+	if atomic.LoadInt32(&errorHandlerCount) != 1 {
+		t.Errorf("expected errorHandler invoked exactly once, got %d", atomic.LoadInt32(&errorHandlerCount))
+	}
+	if mockSend.getSentCount() != 0 {
+		t.Errorf("expected 0 successful sends, got %d", mockSend.getSentCount())
+	}
+}

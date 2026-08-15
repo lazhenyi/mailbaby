@@ -369,6 +369,9 @@ func (c *redisConsumer) consumeStream(ctx context.Context, handler queue.Handler
 	if co.PrefetchCount > 0 {
 		prefetch = int64(co.PrefetchCount)
 	}
+	if co.BatchSize > 0 {
+		prefetch = int64(co.BatchSize)
+	}
 
 	var wg sync.WaitGroup
 	for i := 0; i < concurrency; i++ {
@@ -465,7 +468,9 @@ func (c *redisConsumer) processStreamMessage(ctx context.Context, stream, group 
 	if err == nil && !qMsg.IsAcknowledged() {
 		_ = qMsg.Ack(ctx)
 	} else if err != nil && !qMsg.IsAcknowledged() {
-		_ = qMsg.Nack(ctx, true)
+		// Retries are handled inside the runtime engine; acknowledge the stream
+		// message so it does not stay pending in the PEL forever.
+		_ = qMsg.Ack(ctx)
 	}
 }
 
@@ -552,7 +557,9 @@ func (c *redisConsumer) processListMessage(ctx context.Context, key, rawData str
 
 	err := handler(ctx, qMsg)
 	if err != nil && !qMsg.IsAcknowledged() {
-		_ = qMsg.Nack(ctx, true)
+		// Retries are handled inside the runtime engine; drop instead of
+		// requeueing to avoid tight retry loops on poison messages.
+		_ = qMsg.Ack(ctx)
 	} else if err == nil && !qMsg.IsAcknowledged() {
 		_ = qMsg.Ack(ctx)
 	}

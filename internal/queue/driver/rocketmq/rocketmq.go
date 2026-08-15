@@ -289,7 +289,9 @@ func (c *rmqConsumer) Consume(ctx context.Context, handler queue.Handler, opts .
 			qMsg.SetNackFunc(func(context.Context, bool) error { return nil })
 
 			if err := finalHandler(cctx, qMsg); err != nil {
-				return consumer.ConsumeRetryLater, nil
+				// Retries are handled inside the runtime engine; acknowledge so
+				// RocketMQ does not re-deliver (and re-trigger DLQ publishing) again.
+				return consumer.ConsumeSuccess, nil
 			}
 		}
 		return consumer.ConsumeSuccess, nil

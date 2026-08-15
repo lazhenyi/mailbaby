@@ -29,6 +29,8 @@ type Producer interface {
 	Publish(ctx context.Context, msg *Message, opts ...PublishOption) error
 
 	// PublishBatch sends multiple messages in a single batch operation.
+	// Implementations may execute the publishes sequentially; the batch can
+	// therefore partially succeed before an error is returned.
 	PublishBatch(ctx context.Context, msgs []*Message, opts ...PublishOption) error
 
 	// Close closes the producer and flushes any buffered messages.

@@ -57,3 +57,12 @@ func WithMaxRetries(retries int) Option {
 		}
 	}
 }
+
+// WithRetryInterval sets the backoff interval between send attempts.
+func WithRetryInterval(interval time.Duration) Option {
+	return func(e *Engine) {
+		if interval > 0 {
+			e.retryInterval = interval
+		}
+	}
+}

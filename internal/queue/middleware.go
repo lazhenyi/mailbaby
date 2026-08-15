@@ -3,9 +3,10 @@ package queue
 import (
 	"context"
 	"fmt"
-	"log"
 	"runtime/debug"
 	"time"
+
+	"mailbaby/internal/logger"
 )
 
 // Middleware is an interceptor around a message Handler.
@@ -73,13 +74,15 @@ func RetryMiddleware(maxRetries int, backoff time.Duration) Middleware {
 	}
 }
 
-// LoggingMiddleware logs the duration and status of message handling using standard logger.
-func LoggingMiddleware(logger ...func(format string, args ...any)) Middleware {
-	logFunc := func(format string, args ...any) {
-		log.Printf(format, args...)
+// LoggingMiddleware logs the duration and status of message handling using the structured logger.
+func LoggingMiddleware(loggerFn ...func(level, msg string, fields logger.Fields)) Middleware {
+	logFunc := func(msg string, fields logger.Fields) {
+		logger.Get().WithFields(fields).Info(msg)
 	}
-	if len(logger) > 0 && logger[0] != nil {
-		logFunc = logger[0]
+	if len(loggerFn) > 0 && loggerFn[0] != nil {
+		logFunc = func(msg string, fields logger.Fields) {
+			loggerFn[0]("info", msg, fields)
+		}
 	}
 
 	return func(next Handler) Handler {
@@ -88,12 +91,18 @@ func LoggingMiddleware(logger ...func(format string, args ...any)) Middleware {
 			err := next(ctx, msg)
 			duration := time.Since(start)
 
+			fields := logger.Fields{
+				"msg_id":   msg.ID,
+				"topic":    msg.Topic,
+				"duration": duration.String(),
+			}
 			if err != nil {
-				logFunc("[WARN] Queue handle msg_id=%s topic=%s duration=%v status=FAILED error=%v",
-					msg.ID, msg.Topic, duration, err)
+				fields["status"] = "FAILED"
+				fields["error"] = err.Error()
+				logFunc("queue message handling failed", fields)
 			} else {
-				logFunc("[DEBUG] Queue handle msg_id=%s topic=%s duration=%v status=OK",
-					msg.ID, msg.Topic, duration)
+				fields["status"] = "OK"
+				logFunc("queue message handled", fields)
 			}
 			return err
 		}

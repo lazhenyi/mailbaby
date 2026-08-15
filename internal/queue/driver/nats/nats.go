@@ -148,10 +148,10 @@ func (q *NATSQueue) Stats(ctx context.Context) (queue.Stats, error) {
 		Total:     atomic.LoadInt64(&q.totalSent),
 		Consumers: int(atomic.LoadInt64(&q.activeCons)),
 		Extra: map[string]any{
-			"jetstream":   q.nCfg.JetStream,
-			"in_msgs":     nStats.InMsgs,
-			"out_msgs":    nStats.OutMsgs,
-			"reconnects":  nStats.Reconnects,
+			"jetstream":  q.nCfg.JetStream,
+			"in_msgs":    nStats.InMsgs,
+			"out_msgs":   nStats.OutMsgs,
+			"reconnects": nStats.Reconnects,
 		},
 	}, nil
 }
@@ -393,7 +393,9 @@ func (c *natsConsumer) processMsg(ctx context.Context, nMsg *nats.Msg, handler q
 	if err == nil && !qMsg.IsAcknowledged() {
 		_ = qMsg.Ack(ctx)
 	} else if err != nil && !qMsg.IsAcknowledged() {
-		_ = qMsg.Nack(ctx, true)
+		// Retries are handled inside the runtime engine; ack to stop the
+		// broker from redelivering the exhausted message.
+		_ = qMsg.Ack(ctx)
 	}
 }
 

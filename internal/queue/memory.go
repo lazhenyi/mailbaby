@@ -16,6 +16,18 @@ func init() {
 	Register(config.DriverMemory, newMemoryQueue)
 }
 
+// sendMessage delivers msg to the channel, blocking until the queue accepts it.
+// It returns false (instead of panicking) if the channel was closed concurrently.
+func sendMessage(ch chan *Message, msg *Message) (ok bool) {
+	defer func() {
+		if recover() != nil {
+			ok = false
+		}
+	}()
+	ch <- msg
+	return true
+}
+
 func newMemoryQueue(cfg *config.Config) (Queue, error) {
 	bufSize := 1024
 	if cfg != nil && cfg.Queue.Memory.BufferSize > 0 {
@@ -175,15 +187,17 @@ func (p *memoryProducer) Publish(ctx context.Context, msg *Message, opts ...Publ
 
 	publishStart := time.Now()
 	publishItem := func(m *Message) error {
-		select {
-		case <-ctx.Done():
+		if err := ctx.Err(); err != nil {
 			metrics.Get().ObserveQueuePublish(string(config.DriverMemory), m.Topic, "failed", time.Since(publishStart))
-			return ctx.Err()
-		case p.q.ch <- m:
-			atomic.AddInt64(&p.q.totalPublished, 1)
-			metrics.Get().ObserveQueuePublish(string(config.DriverMemory), m.Topic, "success", time.Since(publishStart))
-			return nil
+			return err
 		}
+		if !sendMessage(p.q.ch, m) {
+			metrics.Get().ObserveQueuePublish(string(config.DriverMemory), m.Topic, "failed", time.Since(publishStart))
+			return ErrQueueClosed
+		}
+		atomic.AddInt64(&p.q.totalPublished, 1)
+		metrics.Get().ObserveQueuePublish(string(config.DriverMemory), m.Topic, "success", time.Since(publishStart))
+		return nil
 	}
 
 	if msg.Delay > 0 {
@@ -282,21 +296,11 @@ func (c *memoryConsumer) processMessage(ctx context.Context, msg *Message, handl
 	})
 	msg.SetNackFunc(func(ctx context.Context, requeue bool) error {
 		if requeue {
-			c.q.mu.RLock()
-			closed := c.q.closed
-			c.q.mu.RUnlock()
-			if !closed {
-				requeued := msg.Clone()
-				requeued.Attempts++
-				select {
-				case c.q.ch <- requeued:
-				case <-ctx.Done():
-					return ctx.Err()
-				default:
-					go func() {
-						c.q.ch <- requeued
-					}()
-				}
+			requeued := msg.Clone()
+			requeued.Attempts++
+			// Best-effort requeue; never panic if the queue is closed concurrently.
+			if !sendMessage(c.q.ch, requeued) {
+				return ErrQueueClosed
 			}
 		}
 		return nil
@@ -308,7 +312,9 @@ func (c *memoryConsumer) processMessage(ctx context.Context, msg *Message, handl
 
 	err := handler(msgCtx, msg)
 	if err != nil && !msg.IsAcknowledged() {
-		_ = msg.Nack(ctx, true)
+		// Retries are handled inside the runtime engine; the broker only needs
+		// to drop the message once processing exhausts its retry budget.
+		_ = msg.Ack(ctx)
 	} else if err == nil && !msg.IsAcknowledged() {
 		_ = msg.Ack(ctx)
 	}
@@ -339,8 +345,8 @@ func (c *memoryConsumer) Receive(ctx context.Context, opts ...ReceiveOption) (*M
 		}
 		msg.SetAckFunc(func(ctx context.Context) error { return nil })
 		msg.SetNackFunc(func(ctx context.Context, requeue bool) error {
-			if requeue {
-				c.q.ch <- msg.Clone()
+			if requeue && !sendMessage(c.q.ch, msg.Clone()) {
+				return ErrQueueClosed
 			}
 			return nil
 		})

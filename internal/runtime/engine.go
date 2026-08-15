@@ -3,7 +3,6 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,6 +23,7 @@ type Engine struct {
 	dlqTopic        string
 	concurrency     int
 	maxRetries      int
+	retryInterval   time.Duration
 	shutdownTimeout time.Duration
 	middlewares     []Middleware
 	errorHandler    ErrorHandler
@@ -53,6 +53,7 @@ func New(q queue.Queue, s sender.Sender, cfg *config.Config, opts ...Option) (*E
 
 	concurrency := 10
 	maxRetries := 3
+	retryInterval := defaultRetryInterval
 	shutdownTimeout := 10 * time.Second
 
 	if cfg != nil {
@@ -61,6 +62,9 @@ func New(q queue.Queue, s sender.Sender, cfg *config.Config, opts ...Option) (*E
 		}
 		if cfg.Queue.MaxRetries >= 0 {
 			maxRetries = cfg.Queue.MaxRetries
+		}
+		if cfg.Queue.RetryInterval > 0 {
+			retryInterval = cfg.Queue.RetryInterval
 		}
 		if cfg.App.ShutdownTimeout > 0 {
 			shutdownTimeout = cfg.App.ShutdownTimeout
@@ -73,6 +77,7 @@ func New(q queue.Queue, s sender.Sender, cfg *config.Config, opts ...Option) (*E
 		cfg:             cfg,
 		concurrency:     concurrency,
 		maxRetries:      maxRetries,
+		retryInterval:   retryInterval,
 		shutdownTimeout: shutdownTimeout,
 		state:           int32(StateStopped),
 	}
@@ -127,9 +132,18 @@ func (e *Engine) Start(ctx context.Context) error {
 			atomic.StoreInt32(&e.state, int32(StateStopped))
 		}()
 
-		consumeErr := e.consumer.Consume(runCtx, e.processMessage, queue.WithConcurrency(e.concurrency))
+		consumeOpts := []queue.ConsumeOption{queue.WithConcurrency(e.concurrency)}
+		if e.cfg != nil && e.cfg.Queue.BatchSize > 0 {
+			consumeOpts = append(consumeOpts, queue.WithBatchSize(e.cfg.Queue.BatchSize))
+		}
+
+		consumeErr := e.consumer.Consume(runCtx, e.processMessage, consumeOpts...)
 		if consumeErr != nil && consumeErr != context.Canceled {
-			log.Printf("[ERROR] runtime: consumer subscription exited: %v", consumeErr)
+			logger.Get().WithFields(logger.Fields{
+				"driver": string(e.queue.Driver()),
+				"topic":  e.queue.Name(),
+				"error":  consumeErr.Error(),
+			}).Error("consumer subscription exited")
 		}
 	}()
 
@@ -143,7 +157,7 @@ func (e *Engine) Stop(ctx context.Context) error {
 		return nil
 	}
 
-	log.Println("[INFO] runtime: stopping execution engine, waiting for in-flight tasks to finish...")
+	logger.Get().Info("stopping execution engine, waiting for in-flight tasks to finish")
 
 	// 1. Cancel consumer context to stop accepting new messages
 	if e.cancelFunc != nil {
@@ -164,9 +178,9 @@ func (e *Engine) Stop(ctx context.Context) error {
 
 	select {
 	case <-done:
-		log.Println("[INFO] runtime: all in-flight tasks drained successfully. Engine stopped.")
+		logger.Get().Info("runtime: all in-flight tasks drained successfully. Engine stopped.")
 	case <-ctx.Done():
-		log.Printf("[WARN] runtime: graceful shutdown timed out after %v", ctx.Err())
+		logger.Get().WithError(ctx.Err()).Warn("graceful shutdown timed out")
 		return ctx.Err()
 	}
 

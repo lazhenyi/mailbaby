@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"mailbaby/internal/config"
+	"mailbaby/internal/logger"
 )
 
 type samplePayload struct {
@@ -319,8 +320,8 @@ func TestMiddlewares(t *testing.T) {
 
 	// 3. Chain & Logging
 	var logs []string
-	logMiddleware := LoggingMiddleware(func(format string, args ...any) {
-		logs = append(logs, fmt.Sprintf(format, args...))
+	logMiddleware := LoggingMiddleware(func(level, msg string, fields logger.Fields) {
+		logs = append(logs, fmt.Sprintf("%s %s: %d", level, msg, fields["msg_id"]))
 	})
 
 	chain := Chain(recovery, logMiddleware)
@@ -364,5 +365,34 @@ func TestOptions(t *testing.T) {
 	if co.Topic != "tasks" || co.Concurrency != 8 || !co.AutoAck || co.MaxRetries != 5 ||
 		co.RetryInterval != 2*time.Second || co.PrefetchCount != 50 || co.BatchSize != 10 {
 		t.Fatalf("unexpected consume options: %+v", co)
+	}
+}
+
+func TestMemoryQueueRequeueAfterClose(t *testing.T) {
+	q := NewMemoryQueue("requeue_close", 4, nil)
+
+	producer, err := q.Producer()
+	if err != nil {
+		t.Fatalf("failed to get producer: %v", err)
+	}
+	_ = producer.Publish(context.Background(), NewMessage([]byte("payload")))
+
+	consumer, err := q.Consumer()
+	if err != nil {
+		t.Fatalf("failed to get consumer: %v", err)
+	}
+
+	msg, err := consumer.Receive(context.Background())
+	if err != nil {
+		t.Fatalf("failed to receive message: %v", err)
+	}
+
+	if err := q.Close(); err != nil {
+		t.Fatalf("failed to close queue: %v", err)
+	}
+
+	// Nack(requeue) after close must not panic and must report the closed queue.
+	if err := msg.Nack(context.Background(), true); !errors.Is(err, ErrQueueClosed) {
+		t.Errorf("expected ErrQueueClosed on requeue after close, got %v", err)
 	}
 }

@@ -302,6 +302,12 @@ func (c *sqsConsumer) Consume(ctx context.Context, handler queue.Handler, opts .
 	if c.q.sCfg.MaxNumberOfMessages > 0 {
 		maxMsgs = c.q.sCfg.MaxNumberOfMessages
 	}
+	if co.BatchSize > 0 && int32(co.BatchSize) < maxMsgs {
+		maxMsgs = int32(co.BatchSize)
+	}
+	if maxMsgs > 10 {
+		maxMsgs = 10 // SQS hard limit
+	}
 
 	finalHandler := handler
 	if len(co.Middlewares) > 0 {
@@ -419,7 +425,9 @@ func (c *sqsConsumer) processMessage(ctx context.Context, queueURL string, sqsMs
 	if err == nil && !qMsg.IsAcknowledged() {
 		_ = qMsg.Ack(ctx)
 	} else if err != nil && !qMsg.IsAcknowledged() {
-		_ = qMsg.Nack(ctx, true)
+		// Retries are handled inside the runtime engine; delete the message so
+		// it does not become immediately visible again after failure.
+		_ = qMsg.Ack(ctx)
 	}
 }
 

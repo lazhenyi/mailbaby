@@ -26,7 +26,6 @@ type RabbitMQQueue struct {
 	rCfg       config.RabbitMQConfig
 	conn       *amqp.Connection
 	ch         *amqp.Channel
-	url        string
 	mu         sync.RWMutex
 	closed     bool
 	inFlight   int64
@@ -87,11 +86,10 @@ func New(cfg *config.Config) (queue.Queue, error) {
 	}
 
 	rq := &RabbitMQQueue{
-		cfg:   cfg,
-		rCfg:  rCfg,
-		conn:  conn,
-		ch:    ch,
-		url:   amqpURL,
+		cfg:  cfg,
+		rCfg: rCfg,
+		conn: conn,
+		ch:   ch,
 	}
 
 	if err := rq.setupTopology(); err != nil {
@@ -488,7 +486,9 @@ func (c *rabbitConsumer) processDelivery(ctx context.Context, d amqp.Delivery, h
 
 	err := handler(ctx, msg)
 	if err != nil && !msg.IsAcknowledged() {
-		_ = msg.Nack(ctx, true)
+		// Retries are handled inside the runtime engine; acknowledge to stop
+		// immediate requeueing and break redelivery loops.
+		_ = msg.Ack(ctx)
 	} else if err == nil && !msg.IsAcknowledged() {
 		_ = msg.Ack(ctx)
 	}
