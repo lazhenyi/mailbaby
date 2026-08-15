@@ -96,6 +96,11 @@ func Dial(ctx context.Context, cfg config.SmtpAccountConfig) (*SmtpClient, error
 			span.RecordError(err)
 			return nil, fmt.Errorf("sender: failed to create smtp client: %w", err)
 		}
+		if err = client.Hello(heloHost); err != nil {
+			_ = client.Close()
+			span.RecordError(err)
+			return nil, fmt.Errorf("sender: HELO/EHLO failed: %w", err)
+		}
 
 	case "STARTTLS":
 		rawConn, err = dialer.DialContext(ctx, "tcp", addr)

@@ -154,11 +154,10 @@ func (p *SmtpConnPool) Release(client *SmtpClient, err error) {
 	}()
 
 	p.mu.RLock()
-	isClosed := p.closed
-	p.mu.RUnlock()
+	defer p.mu.RUnlock()
 
 	// If sending failed or pool closed, destroy connection
-	if err != nil || isClosed {
+	if err != nil || p.closed {
 		_ = client.Close()
 		p.decrementActive()
 		return
@@ -191,12 +190,14 @@ func (p *SmtpConnPool) Close() error {
 		return nil
 	}
 	p.closed = true
+	close(p.idleConns)
 	p.mu.Unlock()
 
-	close(p.idleConns)
 	for client := range p.idleConns {
-		_ = client.Close()
-		p.decrementActive()
+		if client != nil {
+			_ = client.Close()
+			p.decrementActive()
+		}
 	}
 
 	metrics.Get().SetSmtpPoolStats(p.cfg.From, 0, 0)
