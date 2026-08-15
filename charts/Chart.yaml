@@ -1,0 +1,20 @@
+apiVersion: v2
+name: mailbaby
+description: High-performance, multi-protocol (Message Queue / HTTP / gRPC) email delivery microservice for Kubernetes
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - email
+  - smtp
+  - message-queue
+  - grpc
+  - rest-api
+  - mailbaby
+  - golang
+home: https://github.com/your-org/mailbaby
+sources:
+  - https://github.com/your-org/mailbaby
+maintainers:
+  - name: MailBaby Team
+    email: support@example.com

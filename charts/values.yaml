@@ -1,0 +1,317 @@
+# ==============================================================================
+# MailBaby Helm Chart Values
+# High-performance, multi-protocol (MQ / HTTP / gRPC) email sending microservice
+# ==============================================================================
+
+# Number of pod replicas to deploy
+replicaCount: 2
+
+image:
+  repository: mailbaby/mailbaby
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: "latest"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Deployment strategy
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 25%
+    maxUnavailable: 0
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Automatically mount a ServiceAccount's API credentials
+  automount: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  fsGroup: 10001
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+
+securityContext:
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  type: ClusterIP
+  httpPort: 8080
+  grpcPort: 8081
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: mailbaby.local
+      paths:
+        - path: /
+          pathType: Prefix
+          port: 8080
+  tls: []
+  #  - secretName: mailbaby-tls
+  #    hosts:
+  #      - mailbaby.local
+
+# Optional gRPC Ingress (useful when separating HTTP and gRPC ingress controllers)
+grpcIngress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
+  hosts:
+    - host: grpc.mailbaby.local
+      paths:
+        - path: /
+          pathType: Prefix
+          port: 8081
+  tls: []
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+  # maxUnavailable: 1
+
+# Prometheus Operator ServiceMonitor configuration
+serviceMonitor:
+  enabled: false
+  interval: 15s
+  scrapeTimeout: 10s
+  path: /metrics
+  port: http
+  labels: {}
+  # release: prometheus-stack
+  relabelings: []
+  metricRelabelings: []
+
+probes:
+  liveness:
+    enabled: true
+    httpGet:
+      path: /livez
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+    successThreshold: 1
+  readiness:
+    enabled: true
+    httpGet:
+      path: /readyz
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+    successThreshold: 1
+  startup:
+    enabled: true
+    httpGet:
+      path: /livez
+      port: http
+    initialDelaySeconds: 2
+    periodSeconds: 2
+    timeoutSeconds: 2
+    failureThreshold: 30
+    successThreshold: 1
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - mailbaby
+          topologyKey: kubernetes.io/hostname
+
+# Secret management for sensitive credentials
+secret:
+  # Enable creating a dedicated Kubernetes Secret for credentials
+  enabled: true
+  # If specified, references an existing Secret rather than generating one
+  existingSecret: ""
+  # Secret key for HTTP & gRPC authentication
+  authSecretKey: "change_this_to_a_strong_random_secret_key"
+  # SMTP account passwords: map of account name -> password
+  smtpPasswords:
+    default: "your_smtp_password"
+
+# Main MailBaby Application Configuration (generated into ConfigMap)
+config:
+  app:
+    name: "mailbaby"
+    env: "production"
+    debug: false
+    shutdown_timeout: "15s"
+
+  server:
+    host: "0.0.0.0"
+    port: 8080
+    read_timeout: "10s"
+    write_timeout: "10s"
+    idle_timeout: "30s"
+
+  grpc:
+    enabled: true
+    host: "0.0.0.0"
+    port: 8081
+    max_recv_msg_size: 16777216 # 16MB
+    max_send_msg_size: 16777216 # 16MB
+    timeout: "30s"
+
+  auth:
+    enabled: false
+    header_name: "X-API-Key"
+    # secret_key is injected automatically from the Secret / existingSecret
+
+  log:
+    level: "info"
+    format: "json"
+    output: "stdout"
+    show_caller: false
+    show_stacktrace: "error"
+    async: false
+
+  metrics:
+    enabled: true
+    provider: "prometheus"
+    host: "0.0.0.0"
+    port: 8080
+    path: "/metrics"
+    collect_runtime: true
+    collect_queue_stats: true
+    collect_smtp_stats: true
+
+  observability:
+    tracing:
+      enabled: false
+      provider: "otlp"
+      endpoint: "otel-collector.monitoring.svc:4317"
+      sample_rate: 1.0
+    health:
+      enabled: true
+      live_path: "/livez"
+      ready_path: "/readyz"
+      check_timeout: "5s"
+    pprof:
+      enabled: false
+      path: "/debug/pprof"
+
+  smtp:
+    default:
+      host: "smtp.example.com"
+      port: 587
+      username: "noreply@example.com"
+      # password is auto-injected from the Secret
+      from: "noreply@example.com"
+      from_name: "MailBaby Service"
+      reply_to: "support@example.com"
+      encryption: "Auto"
+      auth_type: "Auto"
+      connect_timeout: "10s"
+      send_timeout: "30s"
+      pool:
+        max_idle_conns: 5
+        max_open_conns: 20
+        idle_timeout: "60s"
+      rate_limit:
+        emails_per_second: 50
+        max_recipients_per_email: 50
+        email_size_limit: 15728640 # 15MB
+
+  queue:
+    driver: "memory"
+    concurrency: 10
+    max_retries: 3
+    retry_interval: "5s"
+    prefetch_count: 10
+    batch_size: 1
+
+    # In-memory buffer driver (default)
+    memory:
+      buffer_size: 1024
+
+    # RabbitMQ Driver configuration
+    # rabbitmq:
+    #   host: "rabbitmq.default.svc"
+    #   port: 5672
+    #   username: "user"
+    #   password: "password"
+    #   queue: "mailbaby_emails"
+    #   exchange: "mailbaby_exchange"
+    #   routing_key: "mail.send"
+
+    # Redis Stream Driver configuration
+    # redis:
+    #   host: "redis-master.default.svc"
+    #   port: 6379
+    #   mode: "stream"
+    #   key: "mailbaby:emails"
+    #   group: "mailbaby-workers"
+    #   consumer: "worker"
+
+    # Kafka Driver configuration
+    # kafka:
+    #   brokers:
+    #     - "kafka.default.svc:9092"
+    #   topic: "mailbaby-emails"
+    #   group_id: "mailbaby-consumer-group"
+
+# Extra environment variables
+extraEnv: []
+
+# Extra environment variables from Secret or ConfigMap
+extraEnvFrom: []
+
+# Extra volumes to mount
+extraVolumes: []
+
+# Extra volume mounts
+extraVolumeMounts: []
