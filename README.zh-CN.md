@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/logo.png" alt="MailBaby Logo" width="180" />
+
 # 📬 MailBaby
 
 **基于 Go 语言的高性能、云原生、多队列驱动邮件投递微服务**

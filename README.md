@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/logo.png" alt="MailBaby Logo" width="180" />
+
 # 📬 MailBaby
 
 **High-Performance, Cloud-Native, Multi-Queue Email Delivery Microservice in Go**
