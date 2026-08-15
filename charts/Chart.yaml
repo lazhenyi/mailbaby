@@ -12,9 +12,9 @@ keywords:
   - rest-api
   - mailbaby
   - golang
-home: https://github.com/your-org/mailbaby
+home: https://github.com/mailbabys/mailbaby
 sources:
-  - https://github.com/your-org/mailbaby
+  - https://github.com/mailbabys/mailbaby
 maintainers:
   - name: MailBaby Team
-    email: support@example.com
+    email: mailbaby@yeah.net
