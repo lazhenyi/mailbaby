@@ -11,6 +11,7 @@
 
 > **Status: not production-ready**
 >
+> 
 > MailBaby is under active development. It is **not yet recommended for production use** — features, configuration, and behavior may change at any time.
 
 ## Features
