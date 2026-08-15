@@ -119,4 +119,3 @@ func (h *HealthManager) Mount(mux *http.ServeMux) {
 	mux.HandleFunc(readyPath, h.ReadinessHandler())
 	mux.HandleFunc("/healthz", h.HealthzHandler())
 }
-

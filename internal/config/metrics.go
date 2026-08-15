@@ -20,8 +20,8 @@ const (
 
 // StatsDConfig defines StatsD exporter settings.
 type StatsDConfig struct {
-	Address       string        `mapstructure:"address" json:"address" yaml:"address"`             // e.g. "127.0.0.1:8125"
-	Prefix        string        `mapstructure:"prefix" json:"prefix" yaml:"prefix"`                // metric prefix, e.g. "mailbaby."
+	Address       string        `mapstructure:"address" json:"address" yaml:"address"`                      // e.g. "127.0.0.1:8125"
+	Prefix        string        `mapstructure:"prefix" json:"prefix" yaml:"prefix"`                         // metric prefix, e.g. "mailbaby."
 	FlushInterval time.Duration `mapstructure:"flush_interval" json:"flush_interval" yaml:"flush_interval"` // e.g. 100ms
 }
 
@@ -34,9 +34,9 @@ type BasicAuthConfig struct {
 // PushGatewayConfig defines Prometheus PushGateway client settings.
 type PushGatewayConfig struct {
 	Enabled   bool            `mapstructure:"enabled" json:"enabled" yaml:"enabled"`
-	URL       string          `mapstructure:"url" json:"url" yaml:"url"`                   // e.g. "http://127.0.0.1:9091"
-	Job       string          `mapstructure:"job" json:"job" yaml:"job"`                   // job name e.g. "mailbaby_worker"
-	Interval  time.Duration   `mapstructure:"interval" json:"interval" yaml:"interval"`    // push interval e.g. 15s
+	URL       string          `mapstructure:"url" json:"url" yaml:"url"`                // e.g. "http://127.0.0.1:9091"
+	Job       string          `mapstructure:"job" json:"job" yaml:"job"`                // job name e.g. "mailbaby_worker"
+	Interval  time.Duration   `mapstructure:"interval" json:"interval" yaml:"interval"` // push interval e.g. 15s
 	BasicAuth BasicAuthConfig `mapstructure:"basic_auth" json:"basic_auth" yaml:"basic_auth"`
 }
 

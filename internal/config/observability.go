@@ -20,9 +20,9 @@ const (
 // TracingConfig defines distributed tracing settings.
 type TracingConfig struct {
 	Enabled       bool            `mapstructure:"enabled" json:"enabled" yaml:"enabled"`
-	Provider      TracingProvider `mapstructure:"provider" json:"provider" yaml:"provider"` // otlp, jaeger, zipkin, stdout
-	Endpoint      string          `mapstructure:"endpoint" json:"endpoint" yaml:"endpoint"` // e.g. "localhost:4317" or "http://localhost:4318/v1/traces"
-	Insecure      bool            `mapstructure:"insecure" json:"insecure" yaml:"insecure"` // skip TLS for OTLP gRPC/HTTP
+	Provider      TracingProvider `mapstructure:"provider" json:"provider" yaml:"provider"`          // otlp, jaeger, zipkin, stdout
+	Endpoint      string          `mapstructure:"endpoint" json:"endpoint" yaml:"endpoint"`          // e.g. "localhost:4317" or "http://localhost:4318/v1/traces"
+	Insecure      bool            `mapstructure:"insecure" json:"insecure" yaml:"insecure"`          // skip TLS for OTLP gRPC/HTTP
 	SampleRate    float64         `mapstructure:"sample_rate" json:"sample_rate" yaml:"sample_rate"` // 0.0 to 1.0 (1.0 = 100%)
 	ServiceName   string          `mapstructure:"service_name" json:"service_name" yaml:"service_name"`
 	BatchTimeout  time.Duration   `mapstructure:"batch_timeout" json:"batch_timeout" yaml:"batch_timeout"`
@@ -80,8 +80,8 @@ func (c *TracingConfig) Validate() error {
 // HealthConfig defines HTTP health check probes (/livez, /readyz).
 type HealthConfig struct {
 	Enabled      bool          `mapstructure:"enabled" json:"enabled" yaml:"enabled"`
-	LivePath     string        `mapstructure:"live_path" json:"live_path" yaml:"live_path"`       // liveness probe path, e.g. "/livez"
-	ReadyPath    string        `mapstructure:"ready_path" json:"ready_path" yaml:"ready_path"`    // readiness probe path, e.g. "/readyz"
+	LivePath     string        `mapstructure:"live_path" json:"live_path" yaml:"live_path"`    // liveness probe path, e.g. "/livez"
+	ReadyPath    string        `mapstructure:"ready_path" json:"ready_path" yaml:"ready_path"` // readiness probe path, e.g. "/readyz"
 	CheckTimeout time.Duration `mapstructure:"check_timeout" json:"check_timeout" yaml:"check_timeout"`
 }
 

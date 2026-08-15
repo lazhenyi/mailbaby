@@ -18,17 +18,17 @@ type Metrics struct {
 	statsd   *StatsDClient
 
 	// Email Metrics
-	emailsSentTotal         *prometheus.CounterVec
-	emailSendDuration       *prometheus.HistogramVec
-	emailRecipientsTotal    *prometheus.CounterVec
-	emailPayloadBytesTotal  *prometheus.CounterVec
-	smtpPoolActiveConns     *prometheus.GaugeVec
-	smtpPoolIdleConns       *prometheus.GaugeVec
-	smtpPoolWaitDuration    *prometheus.HistogramVec
-	smtpPoolExhaustedTotal  *prometheus.CounterVec
-	smtpDialDuration        *prometheus.HistogramVec
+	emailsSentTotal          *prometheus.CounterVec
+	emailSendDuration        *prometheus.HistogramVec
+	emailRecipientsTotal     *prometheus.CounterVec
+	emailPayloadBytesTotal   *prometheus.CounterVec
+	smtpPoolActiveConns      *prometheus.GaugeVec
+	smtpPoolIdleConns        *prometheus.GaugeVec
+	smtpPoolWaitDuration     *prometheus.HistogramVec
+	smtpPoolExhaustedTotal   *prometheus.CounterVec
+	smtpDialDuration         *prometheus.HistogramVec
 	smtpTLSHandshakeDuration *prometheus.HistogramVec
-	smtpAuthDuration        *prometheus.HistogramVec
+	smtpAuthDuration         *prometheus.HistogramVec
 
 	// Queue Metrics
 	queueReceivedTotal   *prometheus.CounterVec
@@ -348,9 +348,6 @@ func NewMetrics(cfg config.MetricsConfig) (*Metrics, error) {
 		m.appUptime,
 	)
 
-	// Set initial app info metric
-	m.appInfo.WithLabelValues("mailbaby", "production", "1.0.0").Set(1)
-
 	// Optional StatsD initialization
 	if strings.EqualFold(string(cfg.Provider), string(config.MetricsProviderStatsD)) && cfg.StatsD.Address != "" {
 		sd, err := NewStatsDClient(cfg.StatsD.Address, cfg.StatsD.Prefix, cfg.StatsD.FlushInterval)
@@ -617,6 +614,23 @@ func (m *Metrics) ObserveHTTPRequest(handler, method string, code int, d time.Du
 	if m.httpRequestDuration != nil {
 		m.httpRequestDuration.WithLabelValues(handler, method).Observe(d.Seconds())
 	}
+}
+
+// SetAppInfo records the application identity gauge with real build metadata.
+func (m *Metrics) SetAppInfo(name, env, version string) {
+	if m == nil || m.appInfo == nil {
+		return
+	}
+	if name == "" {
+		name = "mailbaby"
+	}
+	if env == "" {
+		env = "development"
+	}
+	if version == "" {
+		version = "unknown"
+	}
+	m.appInfo.WithLabelValues(name, env, version).Set(1)
 }
 
 // UpdateAppUptime updates the uptime gauge metric.

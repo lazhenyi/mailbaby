@@ -2,13 +2,13 @@ package metrics
 
 import (
 	"context"
-	"log"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 
 	"mailbaby/internal/config"
+	"mailbaby/internal/logger"
 )
 
 // PushGatewayPusher periodically pushes metrics from a prometheus.Gatherer to Prometheus PushGateway.
@@ -47,7 +47,10 @@ func (p *PushGatewayPusher) Start(ctx context.Context) {
 			select {
 			case <-ticker.C:
 				if err := p.pusher.Push(); err != nil {
-					log.Printf("[WARN] metrics: failed to push to PushGateway %s: %v", p.cfg.URL, err)
+					logger.Get().WithFields(logger.Fields{
+						"url":   logger.RedactURL(p.cfg.URL),
+						"error": err.Error(),
+					}).Warn("failed to push metrics to PushGateway")
 				}
 			case <-p.stopChan:
 				_ = p.pusher.Push() // final push

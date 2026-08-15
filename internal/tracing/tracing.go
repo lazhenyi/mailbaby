@@ -28,12 +28,12 @@ type StdoutSpanExporter struct{}
 
 func (e *StdoutSpanExporter) ExportSpan(s *Span) {
 	logger.Get().WithFields(logger.Fields{
-		"trace_id":  s.TraceID(),
-		"span_id":   s.SpanID(),
-		"name":      s.name,
-		"duration":  s.Duration().String(),
-		"status":    s.status,
-		"attrs":     s.attributes,
+		"trace_id": s.TraceID(),
+		"span_id":  s.SpanID(),
+		"name":     s.name,
+		"duration": s.Duration().String(),
+		"status":   s.status,
+		"attrs":    s.attributes,
 	}).Debug("trace span finished")
 }
 
@@ -54,6 +54,9 @@ var (
 )
 
 // Init initializes the global TracerProvider based on TracingConfig.
+// Note: the current implementation exports finished spans to stdout only.
+// The tracing.provider / tracing.endpoint configuration keys are reserved for
+// future OTLP/gRPC exporters and are not yet consumed.
 func Init(cfg config.TracingConfig) (*TracerProvider, error) {
 	cfg.ApplyDefaults()
 

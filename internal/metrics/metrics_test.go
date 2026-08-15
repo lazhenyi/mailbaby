@@ -49,6 +49,7 @@ func TestMetricsRecording(t *testing.T) {
 
 	// 3. Record HTTP metrics
 	m.ObserveHTTPRequest("/metrics", "GET", 200, 2*time.Millisecond)
+	m.SetAppInfo("mailbaby", "test", "1.0.0")
 	m.UpdateAppUptime()
 
 	// 4. Gather metric families

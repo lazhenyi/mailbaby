@@ -39,9 +39,9 @@ func (w *statusResponseWriter) WriteHeader(code int) {
 }
 
 // New creates and configures the unified HTTP Server based on configuration.
-func New(cfg *config.Config) *Server {
+func New(cfg *config.Config) (*Server, error) {
 	if cfg == nil {
-		cfg, _ = config.Load("")
+		return nil, errors.New("handler: config cannot be nil")
 	}
 
 	mux := http.NewServeMux()
@@ -104,13 +104,21 @@ func New(cfg *config.Config) *Server {
 		duration := time.Since(start)
 		span.SetAttribute("http.status_code", srw.statusCode)
 
+		// Use the registered route pattern (Go 1.22+ ServeMux) as the metric
+		// label to avoid unbounded label cardinality from arbitrary paths.
+		handlerLabel := r.Pattern
+		if handlerLabel == "" {
+			handlerLabel = "unmatched"
+		}
+
 		// Record HTTP metrics
-		metrics.Get().ObserveHTTPRequest(r.URL.Path, r.Method, srw.statusCode, duration)
+		metrics.Get().ObserveHTTPRequest(handlerLabel, r.Method, srw.statusCode, duration)
 
 		// Structured request logging
 		logger.Get().WithContext(reqCtx).WithFields(logger.Fields{
 			"method":   r.Method,
 			"path":     r.URL.Path,
+			"handler":  handlerLabel,
 			"status":   srw.statusCode,
 			"duration": duration.String(),
 			"client":   r.RemoteAddr,
@@ -130,10 +138,11 @@ func New(cfg *config.Config) *Server {
 		mux:        mux,
 		httpServer: httpServer,
 		health:     healthMgr,
-	}
+	}, nil
 }
 
 // RegisterChecker registers a component health checker for /readyz probe.
+// Checkers are guarded by an internal mutex and may be registered while running.
 func (s *Server) RegisterChecker(name string, checker Checker) {
 	if s.health != nil {
 		s.health.RegisterChecker(name, checker)
@@ -141,13 +150,24 @@ func (s *Server) RegisterChecker(name string, checker Checker) {
 }
 
 // RegisterRoute registers a custom HTTP route handler on the server mux.
+// Routing must be configured before Start; the Go ServeMux panics if modified after serving begins.
 func (s *Server) RegisterRoute(pattern string, h http.Handler) {
+	s.assertNotRunning()
 	s.mux.Handle(pattern, h)
 }
 
 // RegisterHandleFunc registers a custom HTTP handler function on the server mux.
 func (s *Server) RegisterHandleFunc(pattern string, h http.HandlerFunc) {
+	s.assertNotRunning()
 	s.mux.HandleFunc(pattern, h)
+}
+
+func (s *Server) assertNotRunning() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.running {
+		panic("handler: cannot register HTTP routes after the server has started")
+	}
 }
 
 // Handler returns the underlying http.Handler (useful for testing).

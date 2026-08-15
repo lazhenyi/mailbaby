@@ -60,7 +60,10 @@ func TestUnifiedHTTPServer(t *testing.T) {
 		},
 	}
 
-	server := New(cfg)
+	server, err := New(cfg)
+	if err != nil {
+		t.Fatalf("failed to create server: %v", err)
+	}
 
 	// Register readiness checkers
 	server.RegisterChecker("queue", func(ctx context.Context) error {
@@ -232,6 +235,33 @@ func TestUnifiedHTTPServer(t *testing.T) {
 		body, _ := io.ReadAll(resp.Body)
 		if string(body) != "pong" {
 			t.Errorf("expected 'pong', got %q", string(body))
+		}
+	})
+
+	// 9. Metric label cardinality must not grow with arbitrary paths
+	t.Run("GET unknown path is bucketed as unmatched", func(t *testing.T) {
+		// Hit a path that has no registered route.
+		resp, err := http.Get(baseURL + "/some/random/path/12345")
+		if err != nil {
+			t.Fatalf("failed to GET random path: %v", err)
+		}
+		_ = resp.Body.Close()
+
+		time.Sleep(10 * time.Millisecond)
+
+		metricsResp, err := http.Get(baseURL + "/metrics")
+		if err != nil {
+			t.Fatalf("failed to get /metrics: %v", err)
+		}
+		defer metricsResp.Body.Close()
+
+		body, _ := io.ReadAll(metricsResp.Body)
+		metricsBody := string(body)
+		if !strings.Contains(metricsBody, `handler="unmatched"`) {
+			t.Errorf("expected requests_total to use handler=\"unmatched\", got:\n%s", metricsBody)
+		}
+		if strings.Contains(metricsBody, `handler="/some/random/path/12345"`) {
+			t.Errorf("metric label must not expose raw request paths (cardinality DoS):\n%s", metricsBody)
 		}
 	})
 }

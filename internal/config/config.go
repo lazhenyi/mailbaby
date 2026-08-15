@@ -330,4 +330,5 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("smtp.default.pool.idle_timeout", 60*time.Second)
 	v.SetDefault("smtp.default.rate_limit.emails_per_second", 0)
 	v.SetDefault("smtp.default.rate_limit.max_recipients_per_email", 50)
+	v.SetDefault("smtp.default.rate_limit.email_size_limit", 15*1024*1024)
 }

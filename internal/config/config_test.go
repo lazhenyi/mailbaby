@@ -1016,4 +1016,3 @@ smtp:
 		t.Errorf("expected health live_path '/custom-livez', got %q", cfg.Observability.Health.LivePath)
 	}
 }
-
