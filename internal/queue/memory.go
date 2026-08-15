@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"mailbaby/internal/config"
+	"mailbaby/internal/metrics"
+	"mailbaby/internal/tracing"
 )
 
 func init() {
@@ -166,12 +168,20 @@ func (p *memoryProducer) Publish(ctx context.Context, msg *Message, opts ...Publ
 		defer cancel()
 	}
 
+	if msg.Headers == nil {
+		msg.Headers = make(map[string]string)
+	}
+	tracing.InjectHeaders(ctx, msg.Headers)
+
+	publishStart := time.Now()
 	publishItem := func(m *Message) error {
 		select {
 		case <-ctx.Done():
+			metrics.Get().ObserveQueuePublish(string(config.DriverMemory), m.Topic, "failed", time.Since(publishStart))
 			return ctx.Err()
 		case p.q.ch <- m:
 			atomic.AddInt64(&p.q.totalPublished, 1)
+			metrics.Get().ObserveQueuePublish(string(config.DriverMemory), m.Topic, "success", time.Since(publishStart))
 			return nil
 		}
 	}
@@ -259,6 +269,14 @@ func (c *memoryConsumer) processMessage(ctx context.Context, msg *Message, handl
 	atomic.AddInt64(&c.q.inFlight, 1)
 	defer atomic.AddInt64(&c.q.inFlight, -1)
 
+	// Extract W3C TraceContext if available
+	msgCtx := tracing.ExtractHeaders(ctx, msg.Headers)
+
+	// Record Queue Lag metric
+	if !msg.Timestamp.IsZero() {
+		metrics.Get().ObserveQueueLag(string(config.DriverMemory), msg.Topic, time.Since(msg.Timestamp))
+	}
+
 	msg.SetAckFunc(func(ctx context.Context) error {
 		return nil
 	})
@@ -288,7 +306,7 @@ func (c *memoryConsumer) processMessage(ctx context.Context, msg *Message, handl
 		_ = msg.Ack(ctx)
 	}
 
-	err := handler(ctx, msg)
+	err := handler(msgCtx, msg)
 	if err != nil && !msg.IsAcknowledged() {
 		_ = msg.Nack(ctx, true)
 	} else if err == nil && !msg.IsAcknowledged() {

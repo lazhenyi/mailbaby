@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"mailbaby/internal/config"
+	"mailbaby/internal/logger"
+	"mailbaby/internal/tracing"
 )
 
 // AccountStats reports runtime performance numbers for a single SMTP account.
@@ -110,26 +112,39 @@ func (a *accountSender) Config() config.SmtpAccountConfig {
 }
 
 func (a *accountSender) Send(ctx context.Context, email *Email) error {
+	ctx, span := tracing.StartSpan(ctx, "sender.send_email")
+	defer span.End()
+
 	if email == nil {
+		span.RecordError(ErrNilEmail)
 		return ErrNilEmail
 	}
 
+	span.SetAttribute("email.account", a.name)
+	span.SetAttribute("email.subject", email.Subject)
+
 	if err := email.Validate(); err != nil {
 		atomic.AddInt64(&a.totalFailed, 1)
+		span.RecordError(err)
 		return err
 	}
 
 	recipients := email.AllRecipients()
 	if len(recipients) == 0 {
 		atomic.AddInt64(&a.totalFailed, 1)
+		span.RecordError(ErrNoRecipients)
 		return ErrNoRecipients
 	}
+
+	span.SetAttribute("email.recipients_count", len(recipients))
 
 	// Verify maximum recipients limit
 	maxRcpt := a.cfg.RateLimit.MaxRecipientsPerEmail
 	if maxRcpt > 0 && len(recipients) > maxRcpt {
 		atomic.AddInt64(&a.totalFailed, 1)
-		return fmt.Errorf("%w: got %d recipients, limit is %d", ErrMaxRecipientsExceeded, len(recipients), maxRcpt)
+		err := fmt.Errorf("%w: got %d recipients, limit is %d", ErrMaxRecipientsExceeded, len(recipients), maxRcpt)
+		span.RecordError(err)
+		return err
 	}
 
 	// Wait for rate limiter token if configured
@@ -138,6 +153,7 @@ func (a *accountSender) Send(ctx context.Context, email *Email) error {
 		case <-a.rateLimiter:
 		case <-ctx.Done():
 			atomic.AddInt64(&a.totalFailed, 1)
+			span.RecordError(ctx.Err())
 			return ctx.Err()
 		}
 	}
@@ -146,8 +162,11 @@ func (a *accountSender) Send(ctx context.Context, email *Email) error {
 	msgBytes, err := BuildMIME(email, a.cfg.From, a.cfg.FromName)
 	if err != nil {
 		atomic.AddInt64(&a.totalFailed, 1)
+		span.RecordError(err)
 		return fmt.Errorf("sender: failed to build MIME message: %w", err)
 	}
+
+	span.SetAttribute("email.bytes", len(msgBytes))
 
 	// Determine envelope FROM
 	envelopeFrom := email.From
@@ -159,6 +178,7 @@ func (a *accountSender) Send(ctx context.Context, email *Email) error {
 	client, err := a.pool.Acquire(ctx)
 	if err != nil {
 		atomic.AddInt64(&a.totalFailed, 1)
+		span.RecordError(err)
 		return err
 	}
 
@@ -168,10 +188,24 @@ func (a *accountSender) Send(ctx context.Context, email *Email) error {
 
 	if sendErr != nil {
 		atomic.AddInt64(&a.totalFailed, 1)
+		span.RecordError(sendErr)
+		logger.Get().WithContext(ctx).WithFields(logger.Fields{
+			"account": a.name,
+			"subject": email.Subject,
+			"rcpt":    len(recipients),
+			"error":   sendErr.Error(),
+		}).Error("failed to deliver email via SMTP")
 		return sendErr
 	}
 
 	atomic.AddInt64(&a.totalSent, 1)
+	logger.Get().WithContext(ctx).WithFields(logger.Fields{
+		"account": a.name,
+		"subject": email.Subject,
+		"rcpt":    len(recipients),
+		"bytes":   len(msgBytes),
+	}).Debug("email delivered successfully via SMTP")
+
 	return nil
 }
 

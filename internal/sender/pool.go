@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"mailbaby/internal/config"
+	"mailbaby/internal/metrics"
 )
 
 // PoolStats provides runtime metrics for the SMTP connection pool.
@@ -63,6 +64,12 @@ func NewSmtpConnPool(cfg config.SmtpAccountConfig) *SmtpConnPool {
 
 // Acquire retrieves an idle connection or establishes a new connection within context deadline.
 func (p *SmtpConnPool) Acquire(ctx context.Context) (*SmtpClient, error) {
+	waitStart := time.Now()
+	defer func() {
+		metrics.Get().ObserveSmtpPoolWait(p.cfg.From, time.Since(waitStart))
+		metrics.Get().SetSmtpPoolStats(p.cfg.From, atomic.LoadInt64(&p.activeConns), len(p.idleConns))
+	}()
+
 	p.mu.RLock()
 	if p.closed {
 		p.mu.RUnlock()
@@ -96,6 +103,11 @@ func (p *SmtpConnPool) Acquire(ctx context.Context) (*SmtpClient, error) {
 	}
 
 createNew:
+	// Check if semaphore is already full
+	if len(p.sem) >= p.maxOpen {
+		metrics.Get().IncSmtpPoolExhausted(p.cfg.From)
+	}
+
 	// 2. Acquire a semaphore token to create a new connection
 	select {
 	case p.sem <- struct{}{}:
@@ -128,6 +140,10 @@ func (p *SmtpConnPool) Release(client *SmtpClient, err error) {
 	if client == nil {
 		return
 	}
+
+	defer func() {
+		metrics.Get().SetSmtpPoolStats(p.cfg.From, atomic.LoadInt64(&p.activeConns), len(p.idleConns))
+	}()
 
 	p.mu.RLock()
 	isClosed := p.closed
@@ -175,6 +191,7 @@ func (p *SmtpConnPool) Close() error {
 		p.decrementActive()
 	}
 
+	metrics.Get().SetSmtpPoolStats(p.cfg.From, 0, 0)
 	return nil
 }
 

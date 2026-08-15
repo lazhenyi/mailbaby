@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,17 +24,32 @@ type Metrics struct {
 	emailPayloadBytesTotal  *prometheus.CounterVec
 	smtpPoolActiveConns     *prometheus.GaugeVec
 	smtpPoolIdleConns       *prometheus.GaugeVec
+	smtpPoolWaitDuration    *prometheus.HistogramVec
+	smtpPoolExhaustedTotal  *prometheus.CounterVec
+	smtpDialDuration        *prometheus.HistogramVec
+	smtpTLSHandshakeDuration *prometheus.HistogramVec
+	smtpAuthDuration        *prometheus.HistogramVec
 
 	// Queue Metrics
 	queueReceivedTotal   *prometheus.CounterVec
 	queueProcessedTotal  *prometheus.CounterVec
 	queueRetriedTotal    *prometheus.CounterVec
+	queueDeadLetterTotal *prometheus.CounterVec
 	queueProcessDuration *prometheus.HistogramVec
+	queuePublishDuration *prometheus.HistogramVec
+	queuePublishTotal    *prometheus.CounterVec
+	queueLagDuration     *prometheus.HistogramVec
 	queueDepth           *prometheus.GaugeVec
 	queueInFlight        *prometheus.GaugeVec
 
+	// HTTP Metrics
+	httpRequestsTotal   *prometheus.CounterVec
+	httpRequestDuration *prometheus.HistogramVec
+
 	// App Info
-	appInfo *prometheus.GaugeVec
+	appInfo   *prometheus.GaugeVec
+	appUptime *prometheus.GaugeVec
+	startTime time.Time
 }
 
 // NewMetrics initializes a new Metrics instance with Prometheus collectors and optional StatsD/PushGateway.
@@ -52,12 +68,13 @@ func NewMetrics(cfg config.MetricsConfig) (*Metrics, error) {
 
 	buckets := cfg.HistogramBuckets
 	if len(buckets) == 0 {
-		buckets = []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}
+		buckets = []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}
 	}
 
 	m := &Metrics{
-		cfg:      cfg,
-		registry: registry,
+		cfg:       cfg,
+		registry:  registry,
+		startTime: time.Now(),
 
 		// Emails
 		emailsSentTotal: prometheus.NewCounterVec(
@@ -84,7 +101,7 @@ func NewMetrics(cfg config.MetricsConfig) (*Metrics, error) {
 				Namespace: "mailbaby",
 				Subsystem: "email",
 				Name:      "recipients_total",
-				Help:      "Total count of recipients addressed partitioned by account and recipient type (to/cc/bcc).",
+				Help:      "Total count of recipients addressed partitioned by account and recipient type.",
 			},
 			[]string{"account", "type"},
 		),
@@ -112,6 +129,55 @@ func NewMetrics(cfg config.MetricsConfig) (*Metrics, error) {
 				Subsystem: "smtp",
 				Name:      "pool_idle_connections",
 				Help:      "Current idle available connections in the SMTP connection pool.",
+			},
+			[]string{"account"},
+		),
+		smtpPoolWaitDuration: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Namespace: "mailbaby",
+				Subsystem: "smtp",
+				Name:      "pool_wait_duration_seconds",
+				Help:      "Duration spent waiting to acquire a connection from the pool.",
+				Buckets:   buckets,
+			},
+			[]string{"account"},
+		),
+		smtpPoolExhaustedTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: "mailbaby",
+				Subsystem: "smtp",
+				Name:      "pool_exhausted_total",
+				Help:      "Total occurrences when connection pool reached its capacity.",
+			},
+			[]string{"account"},
+		),
+		smtpDialDuration: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Namespace: "mailbaby",
+				Subsystem: "smtp",
+				Name:      "dial_duration_seconds",
+				Help:      "Duration to establish a TCP/TLS connection to the SMTP server.",
+				Buckets:   buckets,
+			},
+			[]string{"account"},
+		),
+		smtpTLSHandshakeDuration: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Namespace: "mailbaby",
+				Subsystem: "smtp",
+				Name:      "tls_handshake_duration_seconds",
+				Help:      "Duration to complete TLS / STARTTLS handshake.",
+				Buckets:   buckets,
+			},
+			[]string{"account"},
+		),
+		smtpAuthDuration: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Namespace: "mailbaby",
+				Subsystem: "smtp",
+				Name:      "auth_duration_seconds",
+				Help:      "Duration to authenticate with the SMTP server.",
+				Buckets:   buckets,
 			},
 			[]string{"account"},
 		),
@@ -144,12 +210,50 @@ func NewMetrics(cfg config.MetricsConfig) (*Metrics, error) {
 			},
 			[]string{"driver", "topic"},
 		),
+		queueDeadLetterTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: "mailbaby",
+				Subsystem: "queue",
+				Name:      "messages_deadletter_total",
+				Help:      "Total count of messages routed to the dead letter queue.",
+			},
+			[]string{"driver", "topic"},
+		),
 		queueProcessDuration: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
 				Namespace: "mailbaby",
 				Subsystem: "queue",
 				Name:      "process_duration_seconds",
-				Help:      "Histogram of message processing latency in seconds partitioned by driver and topic.",
+				Help:      "Histogram of message processing latency in seconds.",
+				Buckets:   buckets,
+			},
+			[]string{"driver", "topic"},
+		),
+		queuePublishDuration: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Namespace: "mailbaby",
+				Subsystem: "queue",
+				Name:      "publish_duration_seconds",
+				Help:      "Histogram of message publishing latency in seconds.",
+				Buckets:   buckets,
+			},
+			[]string{"driver", "topic"},
+		),
+		queuePublishTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: "mailbaby",
+				Subsystem: "queue",
+				Name:      "publish_total",
+				Help:      "Total count of messages published to queue partitioned by driver, topic, and status.",
+			},
+			[]string{"driver", "topic", "status"},
+		),
+		queueLagDuration: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Namespace: "mailbaby",
+				Subsystem: "queue",
+				Name:      "lag_seconds",
+				Help:      "Time duration elapsed between message generation and consumption.",
 				Buckets:   buckets,
 			},
 			[]string{"driver", "topic"},
@@ -168,12 +272,33 @@ func NewMetrics(cfg config.MetricsConfig) (*Metrics, error) {
 				Namespace: "mailbaby",
 				Subsystem: "queue",
 				Name:      "in_flight",
-				Help:      "Current number of messages in-flight/being processed concurrently.",
+				Help:      "Current number of messages in-flight being processed concurrently.",
 			},
 			[]string{"driver", "topic"},
 		),
 
-		// App Info
+		// HTTP Metrics
+		httpRequestsTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: "mailbaby",
+				Subsystem: "http",
+				Name:      "requests_total",
+				Help:      "Total count of HTTP requests served by the unified server.",
+			},
+			[]string{"handler", "method", "code"},
+		),
+		httpRequestDuration: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Namespace: "mailbaby",
+				Subsystem: "http",
+				Name:      "request_duration_seconds",
+				Help:      "Histogram of HTTP request processing latencies.",
+				Buckets:   buckets,
+			},
+			[]string{"handler", "method"},
+		),
+
+		// App Info & Uptime
 		appInfo: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Namespace: "mailbaby",
@@ -182,6 +307,15 @@ func NewMetrics(cfg config.MetricsConfig) (*Metrics, error) {
 				Help:      "Constant informational gauge with build version and environment details.",
 			},
 			[]string{"name", "env", "version"},
+		),
+		appUptime: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: "mailbaby",
+				Subsystem: "app",
+				Name:      "uptime_seconds",
+				Help:      "Current uptime of the application process in seconds.",
+			},
+			[]string{"name"},
 		),
 	}
 
@@ -193,16 +327,28 @@ func NewMetrics(cfg config.MetricsConfig) (*Metrics, error) {
 		m.emailPayloadBytesTotal,
 		m.smtpPoolActiveConns,
 		m.smtpPoolIdleConns,
+		m.smtpPoolWaitDuration,
+		m.smtpPoolExhaustedTotal,
+		m.smtpDialDuration,
+		m.smtpTLSHandshakeDuration,
+		m.smtpAuthDuration,
 		m.queueReceivedTotal,
 		m.queueProcessedTotal,
 		m.queueRetriedTotal,
+		m.queueDeadLetterTotal,
 		m.queueProcessDuration,
+		m.queuePublishDuration,
+		m.queuePublishTotal,
+		m.queueLagDuration,
 		m.queueDepth,
 		m.queueInFlight,
+		m.httpRequestsTotal,
+		m.httpRequestDuration,
 		m.appInfo,
+		m.appUptime,
 	)
 
-	// Set default app info metric
+	// Set initial app info metric
 	m.appInfo.WithLabelValues("mailbaby", "production", "1.0.0").Set(1)
 
 	// Optional StatsD initialization
@@ -303,6 +449,61 @@ func (m *Metrics) SetSmtpPoolStats(account string, active int64, idle int) {
 	}
 }
 
+// ObserveSmtpPoolWait records the time spent waiting for a pool connection.
+func (m *Metrics) ObserveSmtpPoolWait(account string, d time.Duration) {
+	if m == nil || m.smtpPoolWaitDuration == nil {
+		return
+	}
+	if account == "" {
+		account = "default"
+	}
+	m.smtpPoolWaitDuration.WithLabelValues(account).Observe(d.Seconds())
+}
+
+// IncSmtpPoolExhausted records when the pool is at maximum capacity.
+func (m *Metrics) IncSmtpPoolExhausted(account string) {
+	if m == nil || m.smtpPoolExhaustedTotal == nil {
+		return
+	}
+	if account == "" {
+		account = "default"
+	}
+	m.smtpPoolExhaustedTotal.WithLabelValues(account).Inc()
+}
+
+// ObserveSmtpDial records the duration of dialing a remote SMTP server.
+func (m *Metrics) ObserveSmtpDial(account string, d time.Duration) {
+	if m == nil || m.smtpDialDuration == nil {
+		return
+	}
+	if account == "" {
+		account = "default"
+	}
+	m.smtpDialDuration.WithLabelValues(account).Observe(d.Seconds())
+}
+
+// ObserveSmtpTLSHandshake records TLS handshake latency.
+func (m *Metrics) ObserveSmtpTLSHandshake(account string, d time.Duration) {
+	if m == nil || m.smtpTLSHandshakeDuration == nil {
+		return
+	}
+	if account == "" {
+		account = "default"
+	}
+	m.smtpTLSHandshakeDuration.WithLabelValues(account).Observe(d.Seconds())
+}
+
+// ObserveSmtpAuth records authentication latency.
+func (m *Metrics) ObserveSmtpAuth(account string, d time.Duration) {
+	if m == nil || m.smtpAuthDuration == nil {
+		return
+	}
+	if account == "" {
+		account = "default"
+	}
+	m.smtpAuthDuration.WithLabelValues(account).Observe(d.Seconds())
+}
+
 // IncQueueReceived increments the counter when a message is received from a queue.
 func (m *Metrics) IncQueueReceived(driver, topic string) {
 	if m == nil || m.queueReceivedTotal == nil {
@@ -339,6 +540,14 @@ func (m *Metrics) IncQueueRetried(driver, topic string) {
 	}
 }
 
+// IncQueueDeadLetter increments the counter when a message is moved to DLQ.
+func (m *Metrics) IncQueueDeadLetter(driver, topic string) {
+	if m == nil || m.queueDeadLetterTotal == nil {
+		return
+	}
+	m.queueDeadLetterTotal.WithLabelValues(driver, topic).Inc()
+}
+
 // ObserveQueueProcessDuration records the duration taken to process a queue message.
 func (m *Metrics) ObserveQueueProcessDuration(driver, topic string, d time.Duration) {
 	if m == nil || m.queueProcessDuration == nil {
@@ -349,6 +558,27 @@ func (m *Metrics) ObserveQueueProcessDuration(driver, topic string, d time.Durat
 	if m.statsd != nil {
 		m.statsd.Timing("queue.duration."+driver+"."+topic, d)
 	}
+}
+
+// ObserveQueuePublish records publishing duration and increments the publish counter.
+func (m *Metrics) ObserveQueuePublish(driver, topic, status string, d time.Duration) {
+	if m == nil {
+		return
+	}
+	if m.queuePublishTotal != nil {
+		m.queuePublishTotal.WithLabelValues(driver, topic, status).Inc()
+	}
+	if m.queuePublishDuration != nil {
+		m.queuePublishDuration.WithLabelValues(driver, topic).Observe(d.Seconds())
+	}
+}
+
+// ObserveQueueLag records the queuing delay from generation timestamp to processing.
+func (m *Metrics) ObserveQueueLag(driver, topic string, d time.Duration) {
+	if m == nil || m.queueLagDuration == nil || d <= 0 {
+		return
+	}
+	m.queueLagDuration.WithLabelValues(driver, topic).Observe(d.Seconds())
 }
 
 // SetQueueDepth records current queue depth.
@@ -373,6 +603,28 @@ func (m *Metrics) SetQueueInFlight(driver, topic string, inFlight float64) {
 	if m.statsd != nil {
 		m.statsd.Gauge("queue.in_flight."+driver+"."+topic, inFlight)
 	}
+}
+
+// ObserveHTTPRequest records HTTP request latency and status code.
+func (m *Metrics) ObserveHTTPRequest(handler, method string, code int, d time.Duration) {
+	if m == nil {
+		return
+	}
+	codeStr := strconv.Itoa(code)
+	if m.httpRequestsTotal != nil {
+		m.httpRequestsTotal.WithLabelValues(handler, method, codeStr).Inc()
+	}
+	if m.httpRequestDuration != nil {
+		m.httpRequestDuration.WithLabelValues(handler, method).Observe(d.Seconds())
+	}
+}
+
+// UpdateAppUptime updates the uptime gauge metric.
+func (m *Metrics) UpdateAppUptime() {
+	if m == nil || m.appUptime == nil {
+		return
+	}
+	m.appUptime.WithLabelValues("mailbaby").Set(time.Since(m.startTime).Seconds())
 }
 
 // Close closes optional network clients such as StatsD.

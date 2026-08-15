@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"sync"
@@ -13,10 +12,12 @@ import (
 
 	"mailbaby/internal/config"
 	"mailbaby/internal/handler"
+	"mailbaby/internal/logger"
 	"mailbaby/internal/metrics"
 	"mailbaby/internal/queue"
 	"mailbaby/internal/runtime"
 	"mailbaby/internal/sender"
+	"mailbaby/internal/tracing"
 )
 
 // App is the top-level application container coordinating the lifecycle of all subsystems.
@@ -25,6 +26,7 @@ type App struct {
 	queue   queue.Queue
 	sender  sender.Sender
 	metrics *metrics.Metrics
+	tracer  *tracing.TracerProvider
 	engine  *runtime.Engine
 	server  *handler.Server
 	mu      sync.Mutex
@@ -37,20 +39,31 @@ func NewApp(cfg *config.Config) (*App, error) {
 		return nil, errors.New("cmd: config cannot be nil")
 	}
 
-	// 1. Initialize Queue driver
+	// 1. Initialize Logger
+	if err := logger.Init(cfg.Log); err != nil {
+		return nil, fmt.Errorf("cmd: failed to initialize logger: %w", err)
+	}
+
+	// 2. Initialize Distributed Tracing
+	tracer, err := tracing.Init(cfg.Observability.Tracing)
+	if err != nil {
+		return nil, fmt.Errorf("cmd: failed to initialize tracing: %w", err)
+	}
+
+	// 3. Initialize Queue driver
 	q, err := queue.New(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("cmd: failed to initialize queue driver %q: %w", cfg.Queue.Driver, err)
 	}
 
-	// 2. Initialize SMTP Sender subsystem
+	// 4. Initialize SMTP Sender subsystem
 	mailSender, err := sender.NewFromConfig(cfg)
 	if err != nil {
 		_ = q.Close()
 		return nil, fmt.Errorf("cmd: failed to initialize mail sender: %w", err)
 	}
 
-	// 3. Initialize Metrics subsystem
+	// 5. Initialize Metrics subsystem
 	m, err := metrics.Init(cfg.Metrics)
 	if err != nil {
 		_ = mailSender.Close()
@@ -58,7 +71,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 		return nil, fmt.Errorf("cmd: failed to initialize metrics: %w", err)
 	}
 
-	// 4. Initialize Execution Engine (Queue -> Sender Core)
+	// 6. Initialize Execution Engine (Queue -> Sender Core)
 	engine, err := runtime.New(q, mailSender, cfg)
 	if err != nil {
 		_ = metrics.Close()
@@ -67,7 +80,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 		return nil, fmt.Errorf("cmd: failed to initialize execution engine: %w", err)
 	}
 
-	// 5. Initialize Unified HTTP Server (Metrics, Health, Pprof)
+	// 7. Initialize Unified HTTP Server (Metrics, Health, Pprof)
 	httpServer := handler.New(cfg)
 
 	// Register readiness health checkers
@@ -90,6 +103,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 		queue:   q,
 		sender:  mailSender,
 		metrics: m,
+		tracer:  tracer,
 		engine:  engine,
 		server:  httpServer,
 	}, nil
@@ -109,14 +123,17 @@ func (a *App) Start(ctx context.Context) error {
 	if err := a.engine.Start(ctx); err != nil {
 		return fmt.Errorf("cmd: failed to start engine: %w", err)
 	}
-	log.Printf("[INFO] cmd: runtime engine started (driver=%s, topic=%s)", a.queue.Driver(), a.queue.Name())
+	logger.Get().WithFields(logger.Fields{
+		"driver": string(a.queue.Driver()),
+		"topic":  a.queue.Name(),
+	}).Info("runtime engine started")
 
 	// 2. Start HTTP server
 	if err := a.server.Start(ctx); err != nil {
 		_ = a.engine.Stop(ctx)
 		return fmt.Errorf("cmd: failed to start http server: %w", err)
 	}
-	log.Printf("[INFO] cmd: unified HTTP server listening on http://%s", a.cfg.Server.Address())
+	logger.Get().WithField("addr", a.cfg.Server.Address()).Info("unified HTTP server listening")
 
 	return nil
 }
@@ -131,7 +148,7 @@ func (a *App) Shutdown(ctx context.Context) error {
 	}
 	a.running = false
 
-	log.Println("[INFO] cmd: initiating graceful shutdown...")
+	logger.Get().Info("initiating graceful shutdown...")
 
 	var firstErr error
 
@@ -166,7 +183,15 @@ func (a *App) Shutdown(ctx context.Context) error {
 	// 5. Close metrics clients
 	_ = metrics.Close()
 
-	log.Println("[INFO] cmd: graceful shutdown completed cleanly.")
+	// 6. Close tracing exporter
+	if a.tracer != nil {
+		_ = a.tracer.Close(ctx)
+	}
+
+	// 7. Flush logs
+	_ = logger.Sync()
+
+	logger.Get().Info("graceful shutdown completed cleanly")
 	return firstErr
 }
 
@@ -182,9 +207,9 @@ func (a *App) Run(ctx context.Context) error {
 
 	select {
 	case sig := <-sigChan:
-		log.Printf("[INFO] cmd: received OS signal: %v", sig)
+		logger.Get().WithField("signal", sig.String()).Info("received OS signal, shutting down")
 	case <-ctx.Done():
-		log.Println("[INFO] cmd: context canceled")
+		logger.Get().Info("context canceled, shutting down")
 	}
 
 	// Graceful shutdown with timeout

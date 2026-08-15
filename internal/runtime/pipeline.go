@@ -3,9 +3,9 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"log"
 	"sync/atomic"
 
+	"mailbaby/internal/logger"
 	"mailbaby/internal/metrics"
 	"mailbaby/internal/queue"
 	"mailbaby/internal/sender"
@@ -69,8 +69,14 @@ func (e *Engine) handleFailure(ctx context.Context, msg *queue.Message, email *s
 	// Check if retries are exhausted
 	if msg.Attempts >= maxRetries {
 		atomic.AddInt64(&e.totalDeadLetter, 1)
-		log.Printf("[WARN] runtime: message msg_id=%s exceeded max_retries (%d/%d), routing to DLQ: %v",
-			msg.ID, msg.Attempts, maxRetries, err)
+		metrics.Get().IncQueueDeadLetter(driverStr, topicStr)
+
+		logger.Get().WithContext(ctx).WithFields(logger.Fields{
+			"msg_id":      msg.ID,
+			"attempts":    msg.Attempts,
+			"max_retries": maxRetries,
+			"error":       err.Error(),
+		}).Warn("message exceeded max_retries, routing to DLQ")
 
 		// Route to DLQ if configured
 		if e.dlqProducer != nil {
@@ -88,8 +94,11 @@ func (e *Engine) handleFailure(ctx context.Context, msg *queue.Message, email *s
 			dlqMsg.Headers["X-DLQ-Error"] = err.Error()
 
 			if dlqErr := e.dlqProducer.Publish(ctx, dlqMsg); dlqErr != nil {
-				log.Printf("[ERROR] runtime: failed to publish message msg_id=%s to DLQ %q: %v",
-					msg.ID, e.dlqTopic, dlqErr)
+				logger.Get().WithContext(ctx).WithFields(logger.Fields{
+					"msg_id":    msg.ID,
+					"dlq_topic": e.dlqTopic,
+					"error":     dlqErr.Error(),
+				}).Error("failed to publish message to DLQ")
 			}
 		}
 

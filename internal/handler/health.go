@@ -104,3 +104,19 @@ func (h *HealthManager) HealthzHandler() http.HandlerFunc {
 		_, _ = w.Write([]byte("OK\n"))
 	}
 }
+
+// Mount attaches health check endpoints to the provided HTTP ServeMux.
+func (h *HealthManager) Mount(mux *http.ServeMux) {
+	livePath := h.cfg.LivePath
+	if livePath == "" {
+		livePath = "/livez"
+	}
+	readyPath := h.cfg.ReadyPath
+	if readyPath == "" {
+		readyPath = "/readyz"
+	}
+	mux.HandleFunc(livePath, h.LivenessHandler())
+	mux.HandleFunc(readyPath, h.ReadinessHandler())
+	mux.HandleFunc("/healthz", h.HealthzHandler())
+}
+

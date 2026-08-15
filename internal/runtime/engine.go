@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"mailbaby/internal/config"
+	"mailbaby/internal/logger"
 	"mailbaby/internal/queue"
 	"mailbaby/internal/sender"
 )
@@ -81,6 +82,7 @@ func New(q queue.Queue, s sender.Sender, cfg *config.Config, opts ...Option) (*E
 	topicStr := q.Name()
 	engine.middlewares = []Middleware{
 		RecoveryMiddleware(),
+		TracingMiddleware(driverStr, topicStr),
 		MetricsMiddleware(driverStr, topicStr),
 		LoggingMiddleware(),
 	}
@@ -111,8 +113,12 @@ func (e *Engine) Start(ctx context.Context) error {
 	e.startTime = time.Now()
 
 	atomic.StoreInt32(&e.state, int32(StateRunning))
-	log.Printf("[INFO] runtime: execution engine started (driver=%s, topic=%s, concurrency=%d, retries=%d)",
-		e.queue.Driver(), e.queue.Name(), e.concurrency, e.maxRetries)
+	logger.Get().WithFields(logger.Fields{
+		"driver":      string(e.queue.Driver()),
+		"topic":       e.queue.Name(),
+		"concurrency": e.concurrency,
+		"retries":     e.maxRetries,
+	}).Info("runtime execution engine started")
 
 	e.wg.Add(1)
 	go func() {

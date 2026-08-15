@@ -30,16 +30,28 @@ func TestMetricsRecording(t *testing.T) {
 	m.AddEmailRecipients("default", "to", 3)
 	m.AddEmailBytes("default", 4096)
 	m.SetSmtpPoolStats("default", 2, 5)
+	m.ObserveSmtpPoolWait("default", 10*time.Millisecond)
+	m.IncSmtpPoolExhausted("default")
+	m.ObserveSmtpDial("default", 20*time.Millisecond)
+	m.ObserveSmtpTLSHandshake("default", 30*time.Millisecond)
+	m.ObserveSmtpAuth("default", 15*time.Millisecond)
 
 	// 2. Record Queue metrics
 	m.IncQueueReceived("memory", "email_queue")
 	m.IncQueueProcessed("memory", "email_queue", "success")
 	m.IncQueueRetried("memory", "email_queue")
+	m.IncQueueDeadLetter("memory", "email_queue")
 	m.ObserveQueueProcessDuration("memory", "email_queue", 50*time.Millisecond)
+	m.ObserveQueuePublish("memory", "email_queue", "success", 5*time.Millisecond)
+	m.ObserveQueueLag("memory", "email_queue", 100*time.Millisecond)
 	m.SetQueueDepth("memory", "email_queue", 10)
 	m.SetQueueInFlight("memory", "email_queue", 2)
 
-	// 3. Gather metric families
+	// 3. Record HTTP metrics
+	m.ObserveHTTPRequest("/metrics", "GET", 200, 2*time.Millisecond)
+	m.UpdateAppUptime()
+
+	// 4. Gather metric families
 	families, err := m.Registry().Gather()
 	if err != nil {
 		t.Fatalf("failed to gather metrics: %v", err)
@@ -57,13 +69,25 @@ func TestMetricsRecording(t *testing.T) {
 		"mailbaby_email_payload_bytes_total",
 		"mailbaby_smtp_pool_active_connections",
 		"mailbaby_smtp_pool_idle_connections",
+		"mailbaby_smtp_pool_wait_duration_seconds",
+		"mailbaby_smtp_pool_exhausted_total",
+		"mailbaby_smtp_dial_duration_seconds",
+		"mailbaby_smtp_tls_handshake_duration_seconds",
+		"mailbaby_smtp_auth_duration_seconds",
 		"mailbaby_queue_messages_received_total",
 		"mailbaby_queue_messages_processed_total",
 		"mailbaby_queue_messages_retried_total",
+		"mailbaby_queue_messages_deadletter_total",
 		"mailbaby_queue_process_duration_seconds",
+		"mailbaby_queue_publish_duration_seconds",
+		"mailbaby_queue_publish_total",
+		"mailbaby_queue_lag_seconds",
 		"mailbaby_queue_depth",
 		"mailbaby_queue_in_flight",
+		"mailbaby_http_requests_total",
+		"mailbaby_http_request_duration_seconds",
 		"mailbaby_app_info",
+		"mailbaby_app_uptime_seconds",
 	}
 
 	for _, name := range expectedMetrics {
@@ -133,6 +157,8 @@ func TestGlobalInitAndNoop(t *testing.T) {
 	globalM.IncEmailsSent("default", "success")
 	globalM.IncQueueReceived("memory", "topic")
 	globalM.SetSmtpPoolStats("default", 1, 2)
+	globalM.ObserveSmtpDial("default", 10*time.Millisecond)
+	globalM.ObserveHTTPRequest("/metrics", "GET", 200, time.Millisecond)
 
 	_ = Close()
 }

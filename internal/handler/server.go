@@ -2,8 +2,9 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"expvar"
-	"log"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -12,10 +13,12 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"mailbaby/internal/config"
+	"mailbaby/internal/logger"
 	"mailbaby/internal/metrics"
+	"mailbaby/internal/tracing"
 )
 
-// Server represents the unified HTTP server hosting metrics, health checks, and pprof profiling.
+// Server coordinates HTTP endpoints for health probes, Prometheus metrics, and pprof profiling.
 type Server struct {
 	cfg        *config.Config
 	mux        *http.ServeMux
@@ -25,30 +28,28 @@ type Server struct {
 	running    bool
 }
 
-// New creates and configures a new unified HTTP Server.
+type statusResponseWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (w *statusResponseWriter) WriteHeader(code int) {
+	w.statusCode = code
+	w.ResponseWriter.WriteHeader(code)
+}
+
+// New creates and configures the unified HTTP Server based on configuration.
 func New(cfg *config.Config) *Server {
 	if cfg == nil {
-		cfg = &config.Config{}
+		cfg, _ = config.Load("")
 	}
-	cfg.Server.ApplyDefaults()
 
 	mux := http.NewServeMux()
 	healthMgr := NewHealthManager(cfg.Observability.Health)
 
 	// 1. Mount Health Probes if enabled
 	if cfg.Observability.Health.Enabled {
-		livePath := cfg.Observability.Health.LivePath
-		if livePath == "" {
-			livePath = "/livez"
-		}
-		readyPath := cfg.Observability.Health.ReadyPath
-		if readyPath == "" {
-			readyPath = "/readyz"
-		}
-
-		mux.HandleFunc(livePath, healthMgr.LivenessHandler())
-		mux.HandleFunc(readyPath, healthMgr.ReadinessHandler())
-		mux.HandleFunc("/healthz", healthMgr.HealthzHandler())
+		healthMgr.Mount(mux)
 	}
 
 	// 2. Mount Metrics if enabled
@@ -87,9 +88,38 @@ func New(cfg *config.Config) *Server {
 		idleTimeout = 30 * time.Second
 	}
 
+	// HTTP Logging & Metrics Interceptor
+	interceptor := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		reqCtx, span := tracing.StartSpan(r.Context(), "http.server_request")
+		defer span.End()
+
+		span.SetAttribute("http.method", r.Method)
+		span.SetAttribute("http.url", r.URL.Path)
+		span.SetAttribute("http.remote_addr", r.RemoteAddr)
+
+		srw := &statusResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+		mux.ServeHTTP(srw, r.WithContext(reqCtx))
+
+		duration := time.Since(start)
+		span.SetAttribute("http.status_code", srw.statusCode)
+
+		// Record HTTP metrics
+		metrics.Get().ObserveHTTPRequest(r.URL.Path, r.Method, srw.statusCode, duration)
+
+		// Structured request logging
+		logger.Get().WithContext(reqCtx).WithFields(logger.Fields{
+			"method":   r.Method,
+			"path":     r.URL.Path,
+			"status":   srw.statusCode,
+			"duration": duration.String(),
+			"client":   r.RemoteAddr,
+		}).Debug("served HTTP request")
+	})
+
 	httpServer := &http.Server{
 		Addr:         cfg.Server.Address(),
-		Handler:      mux,
+		Handler:      interceptor,
 		ReadTimeout:  readTimeout,
 		WriteTimeout: writeTimeout,
 		IdleTimeout:  idleTimeout,
@@ -122,7 +152,7 @@ func (s *Server) RegisterHandleFunc(pattern string, h http.HandlerFunc) {
 
 // Handler returns the underlying http.Handler (useful for testing).
 func (s *Server) Handler() http.Handler {
-	return s.mux
+	return s.httpServer.Handler
 }
 
 // Address returns the listening host:port address.
@@ -140,29 +170,47 @@ func (s *Server) Start(ctx context.Context) error {
 	s.running = true
 	s.mu.Unlock()
 
+	errChan := make(chan error, 1)
 	go func() {
-		log.Printf("[INFO] http: unified server listening on %s (metrics=%v, health=%v, pprof=%v)",
-			s.httpServer.Addr, s.cfg.Metrics.Enabled, s.cfg.Observability.Health.Enabled, s.cfg.Observability.Pprof.Enabled)
-		if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Printf("[ERROR] http: unified server exited with error: %v", err)
+		if err := s.httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errChan <- err
 		}
+		close(errChan)
 	}()
 
-	return nil
+	// Brief wait to detect immediate bind failures
+	select {
+	case err := <-errChan:
+		s.mu.Lock()
+		s.running = false
+		s.mu.Unlock()
+		return fmt.Errorf("http: server start error on %s: %w", s.httpServer.Addr, err)
+	case <-time.After(50 * time.Millisecond):
+		logger.Get().WithFields(logger.Fields{
+			"addr":    s.httpServer.Addr,
+			"metrics": s.cfg.Metrics.Enabled,
+			"health":  s.cfg.Observability.Health.Enabled,
+			"pprof":   s.cfg.Observability.Pprof.Enabled,
+		}).Info("unified HTTP server started")
+		return nil
+	}
 }
 
-// Stop gracefully stops the HTTP server.
+// Stop gracefully shuts down the HTTP server.
 func (s *Server) Stop(ctx context.Context) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if !s.running {
+		s.mu.Unlock()
 		return nil
 	}
 	s.running = false
+	s.mu.Unlock()
 
-	if s.httpServer != nil {
-		return s.httpServer.Shutdown(ctx)
-	}
-	return nil
+	logger.Get().Info("stopping unified HTTP server...")
+	return s.httpServer.Shutdown(ctx)
+}
+
+// HealthManager returns the internal health manager.
+func (s *Server) HealthManager() *HealthManager {
+	return s.health
 }
