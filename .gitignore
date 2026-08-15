@@ -1,1 +1,37 @@
+# Compiled Binaries & Build Output
+build/bin/
+bin/
+dist/
+mailbaby
+mailbaby.exe
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Local Configurations & Secrets
+.env
+.env.*
+config.local.yaml
+*.local.yaml
+
+# IDE & Editor files
 .idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Logs & Temporary Files
+logs/
+*.log
+tmp/
+temp/
+
+# Test & Profiling Artifacts
+coverage.out
+coverage.html
+profile.pprof
+
