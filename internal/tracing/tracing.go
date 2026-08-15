@@ -49,8 +49,9 @@ type TracerProvider struct {
 }
 
 var (
-	globalTracer *TracerProvider
-	globalMu     sync.RWMutex
+	defaultTracer = &TracerProvider{}
+	globalTracer  = defaultTracer
+	globalMu      sync.RWMutex
 )
 
 // Init initializes the global TracerProvider based on TracingConfig.
@@ -82,7 +83,7 @@ func Get() *TracerProvider {
 	globalMu.RLock()
 	defer globalMu.RUnlock()
 	if globalTracer == nil {
-		globalTracer = &TracerProvider{}
+		return defaultTracer
 	}
 	return globalTracer
 }
