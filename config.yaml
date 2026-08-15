@@ -35,14 +35,10 @@ observability:
     sample_rate: 1.0
   health:
     enabled: true
-    host: "0.0.0.0"
-    port: 8080
     live_path: "/livez"
     ready_path: "/readyz"
   pprof:
     enabled: false
-    host: "127.0.0.1"
-    port: 6060
     path: "/debug/pprof"
 
 smtp:

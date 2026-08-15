@@ -80,8 +80,6 @@ func (c *TracingConfig) Validate() error {
 // HealthConfig defines HTTP health check probes (/livez, /readyz).
 type HealthConfig struct {
 	Enabled      bool          `mapstructure:"enabled" json:"enabled" yaml:"enabled"`
-	Host         string        `mapstructure:"host" json:"host" yaml:"host"`
-	Port         int           `mapstructure:"port" json:"port" yaml:"port"`
 	LivePath     string        `mapstructure:"live_path" json:"live_path" yaml:"live_path"`       // liveness probe path, e.g. "/livez"
 	ReadyPath    string        `mapstructure:"ready_path" json:"ready_path" yaml:"ready_path"`    // readiness probe path, e.g. "/readyz"
 	CheckTimeout time.Duration `mapstructure:"check_timeout" json:"check_timeout" yaml:"check_timeout"`
@@ -89,12 +87,6 @@ type HealthConfig struct {
 
 // ApplyDefaults applies default settings for HealthConfig.
 func (c *HealthConfig) ApplyDefaults() {
-	if c.Host == "" {
-		c.Host = "0.0.0.0"
-	}
-	if c.Port <= 0 {
-		c.Port = 8080
-	}
 	if c.LivePath == "" {
 		c.LivePath = "/livez"
 	}
@@ -112,10 +104,6 @@ func (c *HealthConfig) Validate() error {
 		return nil
 	}
 
-	if c.Port <= 0 || c.Port > 65535 {
-		return fmt.Errorf("health: invalid port %d (must be between 1 and 65535)", c.Port)
-	}
-
 	if !strings.HasPrefix(c.LivePath, "/") {
 		return fmt.Errorf("health: live_path must start with '/' (got %q)", c.LivePath)
 	}
@@ -129,8 +117,6 @@ func (c *HealthConfig) Validate() error {
 // PprofConfig defines runtime performance profiling (pprof) settings.
 type PprofConfig struct {
 	Enabled      bool   `mapstructure:"enabled" json:"enabled" yaml:"enabled"`
-	Host         string `mapstructure:"host" json:"host" yaml:"host"`
-	Port         int    `mapstructure:"port" json:"port" yaml:"port"`
 	Path         string `mapstructure:"path" json:"path" yaml:"path"`
 	ProfileMutex bool   `mapstructure:"profile_mutex" json:"profile_mutex" yaml:"profile_mutex"`
 	ProfileBlock bool   `mapstructure:"profile_block" json:"profile_block" yaml:"profile_block"`
@@ -140,12 +126,6 @@ type PprofConfig struct {
 
 // ApplyDefaults applies default settings for PprofConfig.
 func (c *PprofConfig) ApplyDefaults() {
-	if c.Host == "" {
-		c.Host = "127.0.0.1"
-	}
-	if c.Port <= 0 {
-		c.Port = 6060
-	}
 	if c.Path == "" {
 		c.Path = "/debug/pprof"
 	}
@@ -155,10 +135,6 @@ func (c *PprofConfig) ApplyDefaults() {
 func (c *PprofConfig) Validate() error {
 	if !c.Enabled {
 		return nil
-	}
-
-	if c.Port <= 0 || c.Port > 65535 {
-		return fmt.Errorf("pprof: invalid port %d (must be between 1 and 65535)", c.Port)
 	}
 
 	if !strings.HasPrefix(c.Path, "/") {
