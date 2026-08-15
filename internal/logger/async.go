@@ -13,9 +13,12 @@ type AsyncWriter struct {
 	ch       chan []byte
 	stopChan chan struct{}
 	doneChan chan struct{}
-	mu       sync.Mutex
-	closed   bool
-	bufPool  sync.Pool
+
+	mu       sync.Mutex // guards closed flag
+	writerMu sync.Mutex // serializes direct writes with worker flushes
+
+	closed  bool
+	bufPool sync.Pool
 }
 
 // NewAsyncWriter creates a new AsyncWriter wrapping the target destination.
@@ -49,8 +52,17 @@ func (aw *AsyncWriter) worker() {
 
 	flush := func() {
 		if batch.Len() > 0 && aw.writer != nil {
+			aw.writerMu.Lock()
 			_, _ = aw.writer.Write(batch.Bytes())
+			aw.writerMu.Unlock()
 			batch.Reset()
+		}
+	}
+
+	write := func(data []byte) {
+		batch.Write(data)
+		if batch.Len() > 16384 {
+			flush()
 		}
 	}
 
@@ -61,10 +73,7 @@ func (aw *AsyncWriter) worker() {
 				flush()
 				return
 			}
-			batch.Write(data)
-			if batch.Len() > 16384 {
-				flush()
-			}
+			write(data)
 		case <-ticker.C:
 			flush()
 		case <-aw.stopChan:
@@ -73,7 +82,7 @@ func (aw *AsyncWriter) worker() {
 				select {
 				case data, ok := <-aw.ch:
 					if ok {
-						batch.Write(data)
+						write(data)
 					} else {
 						flush()
 						return
@@ -103,7 +112,9 @@ func (aw *AsyncWriter) Write(p []byte) (n int, err error) {
 	case aw.ch <- data:
 		return len(p), nil
 	default:
-		// Channel buffer full, write synchronously as fallback
+		// Channel buffer full, write synchronously as fallback.
+		aw.writerMu.Lock()
+		defer aw.writerMu.Unlock()
 		if aw.writer != nil {
 			return aw.writer.Write(p)
 		}
@@ -112,6 +123,8 @@ func (aw *AsyncWriter) Write(p []byte) (n int, err error) {
 }
 
 // Sync drains and flushes all queued log entries.
+// The underlying channel is never closed, so concurrent Write calls can
+// never panic with a "send on closed channel".
 func (aw *AsyncWriter) Sync() error {
 	aw.mu.Lock()
 	if aw.closed {
@@ -122,7 +135,6 @@ func (aw *AsyncWriter) Sync() error {
 	aw.mu.Unlock()
 
 	close(aw.stopChan)
-	close(aw.ch)
 	<-aw.doneChan
 
 	if syncer, ok := aw.writer.(interface{ Sync() error }); ok {

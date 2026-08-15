@@ -218,7 +218,6 @@ func (l *Logger) Errorf(format string, args ...any) { l.newEntry().Errorf(format
 func (l *Logger) Fatal(args ...any)                 { l.newEntry().Fatal(args...) }
 func (l *Logger) Fatalf(format string, args ...any) { l.newEntry().Fatalf(format, args...) }
 
-
 // WithField adds a single key-value field to the log entry.
 func (l *Logger) WithField(key string, val any) *Entry {
 	e := l.newEntry()
@@ -329,12 +328,12 @@ func (e *Entry) log(lvl Level, msg string) {
 		buf.WriteByte('\n')
 
 	case string(config.LogFormatLogfmt):
-		buf.WriteString(fmt.Sprintf("time=%q level=%s msg=%q", timeStr, lvl.String(), msg))
+		buf.WriteString(fmt.Sprintf("time=%q level=%s msg=%q", timeStr, lvl.String(), escapeLogText(msg)))
 		if callerStr != "" {
 			buf.WriteString(fmt.Sprintf(" caller=%q", callerStr))
 		}
 		for k, v := range e.fields {
-			buf.WriteString(fmt.Sprintf(" %s=%v", k, v))
+			buf.WriteString(fmt.Sprintf(" %s=%q", k, escapeLogText(fmt.Sprint(v))))
 		}
 		buf.WriteByte('\n')
 
@@ -344,15 +343,15 @@ func (e *Entry) log(lvl Level, msg string) {
 			buf.WriteString(fmt.Sprintf(" [%s]", callerStr))
 		}
 		if tid, ok := e.fields["trace_id"]; ok {
-			buf.WriteString(fmt.Sprintf(" [trace_id=%v]", tid))
+			buf.WriteString(fmt.Sprintf(" [trace_id=%v]", escapeLogText(fmt.Sprint(tid))))
 		}
-		buf.WriteString(fmt.Sprintf(" %s", msg))
+		buf.WriteString(fmt.Sprintf(" %s", escapeLogText(msg)))
 
 		// Append extra fields
 		var extra []string
 		for k, v := range e.fields {
 			if k != "trace_id" && k != "span_id" {
-				extra = append(extra, fmt.Sprintf("%s=%v", k, v))
+				extra = append(extra, fmt.Sprintf("%s=%v", k, escapeLogText(fmt.Sprint(v))))
 			}
 		}
 		if len(extra) > 0 {
@@ -373,6 +372,16 @@ func (e *Entry) log(lvl Level, msg string) {
 	if lvl == PanicLevel {
 		panic(msg)
 	}
+}
+
+// escapeLogText escapes CR/LF in log messages and field values so untrusted
+// content cannot forge additional log lines in text/logfmt output.
+func escapeLogText(s string) string {
+	if !strings.ContainsAny(s, "\r\n") {
+		return s
+	}
+	replacer := strings.NewReplacer("\r", "\\r", "\n", "\\n")
+	return replacer.Replace(s)
 }
 
 func (e *Entry) Trace(args ...any) { e.log(TraceLevel, fmt.Sprint(args...)) }
@@ -414,7 +423,7 @@ func Errorf(format string, args ...any) { Get().newEntry().Errorf(format, args..
 func Fatal(args ...any)                 { Get().newEntry().Fatal(args...) }
 func Fatalf(format string, args ...any) { Get().newEntry().Fatalf(format, args...) }
 
-func WithField(key string, val any) *Entry  { return Get().WithField(key, val) }
-func WithFields(fields Fields) *Entry       { return Get().WithFields(fields) }
-func WithError(err error) *Entry            { return Get().WithError(err) }
+func WithField(key string, val any) *Entry   { return Get().WithField(key, val) }
+func WithFields(fields Fields) *Entry        { return Get().WithFields(fields) }
+func WithError(err error) *Entry             { return Get().WithError(err) }
 func WithContext(ctx context.Context) *Entry { return Get().WithContext(ctx) }

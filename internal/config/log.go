@@ -42,15 +42,15 @@ type LogConfig struct {
 	Format         LogFormat `mapstructure:"format" json:"format" yaml:"format"`
 	Output         LogOutput `mapstructure:"output" json:"output" yaml:"output"`
 	FilePath       string    `mapstructure:"file_path" json:"file_path" yaml:"file_path"`
-	MaxSize        int       `mapstructure:"max_size" json:"max_size" yaml:"max_size"`             // in megabytes
-	MaxBackups     int       `mapstructure:"max_backups" json:"max_backups" yaml:"max_backups"`    // max count of old files
-	MaxAge         int       `mapstructure:"max_age" json:"max_age" yaml:"max_age"`                // in days
-	Compress       bool      `mapstructure:"compress" json:"compress" yaml:"compress"`             // whether to compress old logs
-	ShowCaller     bool      `mapstructure:"show_caller" json:"show_caller" yaml:"show_caller"`    // attach caller file and line
+	MaxSize        int       `mapstructure:"max_size" json:"max_size" yaml:"max_size"`                      // in megabytes
+	MaxBackups     int       `mapstructure:"max_backups" json:"max_backups" yaml:"max_backups"`             // max count of old files
+	MaxAge         int       `mapstructure:"max_age" json:"max_age" yaml:"max_age"`                         // in days
+	Compress       bool      `mapstructure:"compress" json:"compress" yaml:"compress"`                      // whether to compress old logs
+	ShowCaller     bool      `mapstructure:"show_caller" json:"show_caller" yaml:"show_caller"`             // attach caller file and line
 	ShowStacktrace string    `mapstructure:"show_stacktrace" json:"show_stacktrace" yaml:"show_stacktrace"` // stacktrace level: none, warn, error, panic
-	TimeFormat     string    `mapstructure:"time_format" json:"time_format" yaml:"time_format"`    // custom time format e.g. RFC3339
-	Async          bool      `mapstructure:"async" json:"async" yaml:"async"`                      // asynchronous logging
-	BufferSize     int       `mapstructure:"buffer_size" json:"buffer_size" yaml:"buffer_size"`    // buffer size for async mode
+	TimeFormat     string    `mapstructure:"time_format" json:"time_format" yaml:"time_format"`             // custom time format e.g. RFC3339
+	Async          bool      `mapstructure:"async" json:"async" yaml:"async"`                               // asynchronous logging
+	BufferSize     int       `mapstructure:"buffer_size" json:"buffer_size" yaml:"buffer_size"`             // buffer size for async mode
 }
 
 // ApplyDefaults applies default settings for LogConfig.

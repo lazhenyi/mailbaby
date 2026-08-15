@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"mailbaby/internal/config"
 )
@@ -61,5 +64,61 @@ func TestAsyncWriter(t *testing.T) {
 
 	if !strings.Contains(buf.String(), "async log line") {
 		t.Errorf("expected buffered output after sync, got:\n%s", buf.String())
+	}
+}
+
+func TestAsyncWriterConcurrentSync(t *testing.T) {
+	var buf bytes.Buffer
+	aw := NewAsyncWriter(&buf, 32)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 200; j++ {
+				_, _ = aw.Write([]byte("concurrent log line\n"))
+				time.Sleep(time.Millisecond)
+			}
+		}()
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		time.Sleep(10 * time.Millisecond)
+		_ = aw.Sync()
+	}()
+
+	wg.Wait()
+	// The test passes if no "send on closed channel" panic occurred.
+
+	if _, err := aw.Write([]byte("after sync\n")); err != io.ErrClosedPipe {
+		t.Errorf("expected ErrClosedPipe after Sync, got %v", err)
+	}
+}
+
+func TestLogTextEscaping(t *testing.T) {
+	var buf bytes.Buffer
+	textLogger := &Logger{
+		cfg: config.LogConfig{
+			Level:  "info",
+			Format: "text",
+		},
+		level: InfoLevel,
+		out:   &buf,
+	}
+
+	textLogger.WithField("subject", "hello\r\nBcc: victim@example.com").Info("line1\nline2")
+
+	out := buf.String()
+	if strings.Contains(out, "line1\nline2") {
+		t.Errorf("raw newline in log message must be escaped:\n%q", out)
+	}
+	if strings.Contains(out, "hello\nBcc") {
+		t.Errorf("CRLF in field value must be escaped, otherwise log lines can be forged:\n%q", out)
+	}
+	if !strings.Contains(out, "\\n") {
+		t.Errorf("expected escaped newline marker in text output:\n%q", out)
 	}
 }
