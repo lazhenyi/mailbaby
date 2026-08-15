@@ -33,7 +33,11 @@ func main() {
 	fmt.Printf("[INFO] Environment        : %s (debug=%v)\n", cfg.App.Env, cfg.App.Debug)
 	fmt.Printf("[INFO] Queue Driver       : %s (concurrency=%d, retries=%d)\n", cfg.Queue.Driver, cfg.Queue.Concurrency, cfg.Queue.MaxRetries)
 	fmt.Printf("[INFO] Registered Drivers : %v\n", queue.GetRegisteredDrivers())
-	fmt.Printf("[INFO] SMTP Server        : %s:%d (from=%s, encryption=%s)\n", cfg.SMTP.Host, cfg.SMTP.Port, cfg.SMTP.From, cfg.SMTP.Encryption)
+	if defaultAcc, err := cfg.SMTP.Default(); err == nil {
+		fmt.Printf("[INFO] SMTP Accounts      : %d configured (default=%s:%d, from=%s)\n", len(cfg.SMTP), defaultAcc.Host, defaultAcc.Port, defaultAcc.From)
+	} else {
+		fmt.Printf("[INFO] SMTP Accounts      : %d configured\n", len(cfg.SMTP))
+	}
 	fmt.Printf("[INFO] Log Level          : %s (format=%s, output=%s)\n", cfg.Log.Level, cfg.Log.Format, cfg.Log.Output)
 
 	q, err := queue.New(cfg)

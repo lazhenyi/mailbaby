@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -9,9 +10,10 @@ import (
 func TestLoadDefaultsAndMemory(t *testing.T) {
 	yamlContent := `
 smtp:
-  host: "smtp.example.com"
-  port: 587
-  from: "sender@example.com"
+  default:
+    host: "smtp.example.com"
+    port: 587
+    from: "sender@example.com"
 `
 	cfg, err := LoadFromBytes([]byte(yamlContent), "yaml")
 	if err != nil {
@@ -45,14 +47,18 @@ smtp:
 		t.Errorf("expected BufferSize 1024, got %d", cfg.Queue.Memory.BufferSize)
 	}
 
-	if cfg.SMTP.Encryption != SmtpEncryptionAuto {
-		t.Errorf("expected Encryption 'Auto', got %q", cfg.SMTP.Encryption)
+	defaultAcc, err := cfg.SMTP.Default()
+	if err != nil {
+		t.Fatalf("expected default account, got error: %v", err)
 	}
-	if cfg.SMTP.Pool.MaxIdleConns != 5 {
-		t.Errorf("expected MaxIdleConns 5, got %d", cfg.SMTP.Pool.MaxIdleConns)
+	if defaultAcc.Encryption != SmtpEncryptionAuto {
+		t.Errorf("expected Encryption 'Auto', got %q", defaultAcc.Encryption)
 	}
-	if cfg.SMTP.Pool.MaxOpenConns != 20 {
-		t.Errorf("expected MaxOpenConns 20, got %d", cfg.SMTP.Pool.MaxOpenConns)
+	if defaultAcc.Pool.MaxIdleConns != 5 {
+		t.Errorf("expected MaxIdleConns 5, got %d", defaultAcc.Pool.MaxIdleConns)
+	}
+	if defaultAcc.Pool.MaxOpenConns != 20 {
+		t.Errorf("expected MaxOpenConns 20, got %d", defaultAcc.Pool.MaxOpenConns)
 	}
 }
 
@@ -60,9 +66,9 @@ func TestEnvOverride(t *testing.T) {
 	t.Setenv("MAILBABY_APP_NAME", "custom-mailbaby")
 	t.Setenv("MAILBABY_QUEUE_DRIVER", "memory")
 	t.Setenv("MAILBABY_QUEUE_CONCURRENCY", "42")
-	t.Setenv("MAILBABY_SMTP_HOST", "smtp.custom.org")
-	t.Setenv("MAILBABY_SMTP_PORT", "465")
-	t.Setenv("MAILBABY_SMTP_FROM", "test@custom.org")
+	t.Setenv("MAILBABY_SMTP_DEFAULT_HOST", "smtp.custom.org")
+	t.Setenv("MAILBABY_SMTP_DEFAULT_PORT", "465")
+	t.Setenv("MAILBABY_SMTP_DEFAULT_FROM", "test@custom.org")
 
 	cfg, err := LoadFromBytes([]byte(""), "yaml")
 	if err != nil {
@@ -75,23 +81,28 @@ func TestEnvOverride(t *testing.T) {
 	if cfg.Queue.Concurrency != 42 {
 		t.Errorf("expected Concurrency 42, got %d", cfg.Queue.Concurrency)
 	}
-	if cfg.SMTP.Host != "smtp.custom.org" {
-		t.Errorf("expected SMTP.Host 'smtp.custom.org', got %q", cfg.SMTP.Host)
+
+	defaultAcc, err := cfg.SMTP.Default()
+	if err != nil {
+		t.Fatalf("expected default account, got error: %v", err)
 	}
-	if cfg.SMTP.Port != 465 {
-		t.Errorf("expected SMTP.Port 465, got %d", cfg.SMTP.Port)
+	if defaultAcc.Host != "smtp.custom.org" {
+		t.Errorf("expected Host 'smtp.custom.org', got %q", defaultAcc.Host)
+	}
+	if defaultAcc.Port != 465 {
+		t.Errorf("expected Port 465, got %d", defaultAcc.Port)
 	}
 }
 
-func TestSmtpValidation(t *testing.T) {
+func TestSmtpAccountValidation(t *testing.T) {
 	tests := []struct {
 		name    string
-		config  SmtpConfig
+		config  SmtpAccountConfig
 		wantErr bool
 	}{
 		{
 			name: "valid full smtp config",
-			config: SmtpConfig{
+			config: SmtpAccountConfig{
 				Host:       "smtp.mailgun.org",
 				Port:       587,
 				Username:   "postmaster@mailgun.org",
@@ -106,7 +117,7 @@ func TestSmtpValidation(t *testing.T) {
 		},
 		{
 			name: "missing host",
-			config: SmtpConfig{
+			config: SmtpAccountConfig{
 				Host: "",
 				Port: 587,
 				From: "test@example.com",
@@ -115,7 +126,7 @@ func TestSmtpValidation(t *testing.T) {
 		},
 		{
 			name: "invalid port 0",
-			config: SmtpConfig{
+			config: SmtpAccountConfig{
 				Host: "smtp.example.com",
 				Port: 0,
 				From: "test@example.com",
@@ -124,7 +135,7 @@ func TestSmtpValidation(t *testing.T) {
 		},
 		{
 			name: "invalid port 70000",
-			config: SmtpConfig{
+			config: SmtpAccountConfig{
 				Host: "smtp.example.com",
 				Port: 70000,
 				From: "test@example.com",
@@ -133,7 +144,7 @@ func TestSmtpValidation(t *testing.T) {
 		},
 		{
 			name: "missing from",
-			config: SmtpConfig{
+			config: SmtpAccountConfig{
 				Host: "smtp.example.com",
 				Port: 587,
 				From: "",
@@ -142,7 +153,7 @@ func TestSmtpValidation(t *testing.T) {
 		},
 		{
 			name: "invalid from address",
-			config: SmtpConfig{
+			config: SmtpAccountConfig{
 				Host: "smtp.example.com",
 				Port: 587,
 				From: "not-an-email",
@@ -151,7 +162,7 @@ func TestSmtpValidation(t *testing.T) {
 		},
 		{
 			name: "invalid reply_to address",
-			config: SmtpConfig{
+			config: SmtpAccountConfig{
 				Host:    "smtp.example.com",
 				Port:    587,
 				From:    "valid@example.com",
@@ -161,7 +172,7 @@ func TestSmtpValidation(t *testing.T) {
 		},
 		{
 			name: "invalid encryption type",
-			config: SmtpConfig{
+			config: SmtpAccountConfig{
 				Host:       "smtp.example.com",
 				Port:       587,
 				From:       "valid@example.com",
@@ -171,7 +182,7 @@ func TestSmtpValidation(t *testing.T) {
 		},
 		{
 			name: "invalid auth type",
-			config: SmtpConfig{
+			config: SmtpAccountConfig{
 				Host:     "smtp.example.com",
 				Port:     587,
 				From:     "valid@example.com",
@@ -183,11 +194,140 @@ func TestSmtpValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.config.Validate()
+			err := tt.config.Validate("test")
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestSmtpMultiAccountValidation(t *testing.T) {
+	t.Run("missing default account", func(t *testing.T) {
+		cfg := SmtpConfig{
+			"marketing": SmtpAccountConfig{
+				Host: "smtp.marketing.com",
+				Port: 587,
+				From: "marketing@example.com",
+			},
+		}
+		err := cfg.Validate()
+		if !errors.Is(err, ErrDefaultAccountRequired) {
+			t.Errorf("expected ErrDefaultAccountRequired, got %v", err)
+		}
+	})
+
+	t.Run("empty config", func(t *testing.T) {
+		var cfg SmtpConfig
+		err := cfg.Validate()
+		if !errors.Is(err, ErrDefaultAccountRequired) {
+			t.Errorf("expected ErrDefaultAccountRequired, got %v", err)
+		}
+	})
+
+	t.Run("valid multi-accounts", func(t *testing.T) {
+		cfg := SmtpConfig{
+			"default": SmtpAccountConfig{
+				Host: "smtp.example.com",
+				Port: 587,
+				From: "default@example.com",
+			},
+			"marketing": SmtpAccountConfig{
+				Host: "smtp.mailgun.org",
+				Port: 587,
+				From: "marketing@example.com",
+			},
+			"alert": SmtpAccountConfig{
+				Host: "smtp.sendgrid.net",
+				Port: 465,
+				From: "alert@example.com",
+			},
+		}
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("expected valid config, got error: %v", err)
+		}
+
+		if len(cfg.AccountNames()) != 3 {
+			t.Errorf("expected 3 accounts, got %d", len(cfg.AccountNames()))
+		}
+	})
+
+	t.Run("invalid secondary account", func(t *testing.T) {
+		cfg := SmtpConfig{
+			"default": SmtpAccountConfig{
+				Host: "smtp.example.com",
+				Port: 587,
+				From: "default@example.com",
+			},
+			"invalid_acc": SmtpAccountConfig{
+				Host: "", // missing host
+				Port: 587,
+				From: "invalid@example.com",
+			},
+		}
+		err := cfg.Validate()
+		if err == nil {
+			t.Error("expected error for invalid secondary account, got nil")
+		}
+	})
+}
+
+func TestSmtpGetAccount(t *testing.T) {
+	cfg := SmtpConfig{
+		"default": SmtpAccountConfig{
+			Host: "smtp.default.com",
+			Port: 587,
+			From: "default@example.com",
+		},
+		"marketing": SmtpAccountConfig{
+			Host: "smtp.marketing.com",
+			Port: 465,
+			From: "marketing@example.com",
+		},
+	}
+
+	// 1. Get default account explicitly
+	acc, err := cfg.GetAccount("default")
+	if err != nil || acc.Host != "smtp.default.com" {
+		t.Fatalf("failed to get default account: %v", err)
+	}
+
+	// 2. Get default account with empty string
+	accEmpty, err := cfg.GetAccount("")
+	if err != nil || accEmpty.Host != "smtp.default.com" {
+		t.Fatalf("failed to get default account with empty name: %v", err)
+	}
+
+	// 3. Get secondary account
+	accMkt, err := cfg.GetAccount("marketing")
+	if err != nil || accMkt.Host != "smtp.marketing.com" {
+		t.Fatalf("failed to get marketing account: %v", err)
+	}
+
+	// 4. Case-insensitive lookup
+	accCase, err := cfg.GetAccount("MARKETING")
+	if err != nil || accCase.Host != "smtp.marketing.com" {
+		t.Fatalf("failed case-insensitive lookup: %v", err)
+	}
+
+	// 5. Non-existent account
+	_, err = cfg.GetAccount("nonexistent")
+	if !errors.Is(err, ErrAccountNotFound) {
+		t.Errorf("expected ErrAccountNotFound, got %v", err)
+	}
+
+	// 6. HasAccount
+	if !cfg.HasAccount("default") || !cfg.HasAccount("marketing") {
+		t.Error("expected HasAccount to return true for existing accounts")
+	}
+	if cfg.HasAccount("unknown") {
+		t.Error("expected HasAccount to return false for unknown account")
+	}
+
+	// 7. MustGetAccount
+	mustAcc := cfg.MustGetAccount("marketing")
+	if mustAcc.Host != "smtp.marketing.com" {
+		t.Errorf("expected host 'smtp.marketing.com', got %q", mustAcc.Host)
 	}
 }
 
@@ -436,10 +576,15 @@ queue:
   driver: "memory"
   concurrency: 8
 smtp:
-  host: "smtp.example.org"
-  port: 465
-  from: "admin@example.org"
-  encryption: "SSL"
+  default:
+    host: "smtp.example.org"
+    port: 465
+    from: "admin@example.org"
+    encryption: "SSL"
+  marketing:
+    host: "smtp.mailgun.org"
+    port: 587
+    from: "marketing@example.org"
 log:
   level: "warn"
 `
@@ -462,9 +607,23 @@ log:
 	if cfg.Queue.Concurrency != 8 {
 		t.Errorf("expected queue.concurrency 8, got %d", cfg.Queue.Concurrency)
 	}
-	if cfg.SMTP.Encryption != SmtpEncryptionSSL {
-		t.Errorf("expected smtp.encryption 'SSL', got %q", cfg.SMTP.Encryption)
+
+	defaultAcc, err := cfg.SMTP.Default()
+	if err != nil {
+		t.Fatalf("expected default account, got %v", err)
 	}
+	if defaultAcc.Encryption != SmtpEncryptionSSL {
+		t.Errorf("expected smtp.default.encryption 'SSL', got %q", defaultAcc.Encryption)
+	}
+
+	mktAcc, err := cfg.SMTP.GetAccount("marketing")
+	if err != nil {
+		t.Fatalf("expected marketing account, got %v", err)
+	}
+	if mktAcc.Host != "smtp.mailgun.org" {
+		t.Errorf("expected smtp.marketing.host 'smtp.mailgun.org', got %q", mktAcc.Host)
+	}
+
 	if cfg.Log.Level != "warn" {
 		t.Errorf("expected log.level 'warn', got %q", cfg.Log.Level)
 	}

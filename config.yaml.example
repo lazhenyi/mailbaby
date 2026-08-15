@@ -39,65 +39,93 @@ log:
 
 # ------------------------------------------------------------------------------
 # 3. SMTP 邮件发信服务器配置 (SMTP)
+# 支持声明多个 SMTP 账号，发送端可通过指定账号名选择（未指定时默认使用 default 账号）
+# 默认配置中必须存在一个 "default" 账号
 # ------------------------------------------------------------------------------
 smtp:
-  # SMTP 服务器地址 (如 smtp.qq.com, smtp.163.com, smtp.gmail.com, smtp.office365.com, 自建 Postfix/Haraka)
-  host: "smtp.example.com"
-  # SMTP 端口: 465 (SSL/TLS), 587 (STARTTLS), 25 (标准明文/中继)
-  port: 587
-  # 认证用户名 / 登录邮箱
-  username: "noreply@example.com"
-  # 认证密码 / 第三方客户端授权码 / API Key
-  password: "your_smtp_password_or_token"
+  # 必须配置的默认发信账号 (default)
+  default:
+    # SMTP 服务器地址 (如 smtp.qq.com, smtp.163.com, smtp.gmail.com, smtp.office365.com, 自建 Postfix/Haraka)
+    host: "smtp.example.com"
+    # SMTP 端口: 465 (SSL/TLS), 587 (STARTTLS), 25 (标准明文/中继)
+    port: 587
+    # 认证用户名 / 登录邮箱
+    username: "noreply@example.com"
+    # 认证密码 / 第三方客户端授权码 / API Key
+    password: "your_smtp_password_or_token"
 
-  # 默认发件人邮箱地址
-  from: "noreply@example.com"
-  # 发件人显示名称 (可选)
-  from_name: "MailBaby Notification"
-  # 统一回复地址 (可选)
-  reply_to: "support@example.com"
+    # 默认发件人邮箱地址
+    from: "noreply@example.com"
+    # 发件人显示名称 (可选)
+    from_name: "MailBaby Notification"
+    # 统一回复地址 (可选)
+    reply_to: "support@example.com"
 
-  # 加密传输模式:
-  #   - Auto: 根据端口自动匹配 (465 走 SSL/TLS，其他走 STARTTLS)
-  #   - SSL / TLS: 强制直接建立 SSL/TLS 加密连接 (通常端口 465)
-  #   - STARTTLS: 建立明文连接后升级 TLS (通常端口 587 / 25)
-  #   - None: 明文传输，不使用加密 (仅限安全内网或测试环境)
-  encryption: "Auto"
+    # 加密传输模式:
+    #   - Auto: 根据端口自动匹配 (465 走 SSL/TLS，其他走 STARTTLS)
+    #   - SSL / TLS: 强制直接建立 SSL/TLS 加密连接 (通常端口 465)
+    #   - STARTTLS: 建立明文连接后升级 TLS (通常端口 587 / 25)
+    #   - None: 明文传输，不使用加密 (仅限安全内网或测试环境)
+    encryption: "Auto"
 
-  # 是否跳过证书有效性校验 (用于自签名证书或企业内网中继环境)
-  insecure_skip_verify: false
+    # 是否跳过证书有效性校验 (用于自签名证书或企业内网中继环境)
+    insecure_skip_verify: false
 
-  # HELO / EHLO 问候域名 (留空则默认使用本机 hostname)
-  helo_hostname: ""
+    # HELO / EHLO 问候域名 (留空则默认使用本机 hostname)
+    helo_hostname: ""
 
-  # 身份认证机制:
-  #   - Auto: 自动协商 (优先使用服务端支持的最高安全性机制)
-  #   - PLAIN: SASL PLAIN (大部分服务商支持)
-  #   - LOGIN: SASL LOGIN (国内很多邮箱及传统 SMTP 服务器常用)
-  #   - CRAM-MD5: SASL CRAM-MD5
-  #   - None: 无需身份认证 (开放中继)
-  auth_type: "Auto"
+    # 身份认证机制:
+    #   - Auto: 自动协商 (优先使用服务端支持的最高安全性机制)
+    #   - PLAIN: SASL PLAIN (大部分服务商支持)
+    #   - LOGIN: SASL LOGIN (国内很多邮箱及传统 SMTP 服务器常用)
+    #   - CRAM-MD5: SASL CRAM-MD5
+    #   - None: 无需身份认证 (开放中继)
+    auth_type: "Auto"
 
-  # 网络与发信超时控制
-  connect_timeout: "10s"
-  send_timeout: "30s"
-  keep_alive: "30s"
+    # 网络与发信超时控制
+    connect_timeout: "10s"
+    send_timeout: "30s"
+    keep_alive: "30s"
 
-  # 发信连接池管理
-  pool:
-    # 最大空闲连接数
-    max_idle_conns: 5
-    # 最大同时并发连接数
-    max_open_conns: 20
-    # 空闲连接最大存活时间
-    idle_timeout: "60s"
+    # 发信连接池管理
+    pool:
+      # 最大空闲连接数
+      max_idle_conns: 5
+      # 最大同时并发连接数
+      max_open_conns: 20
+      # 空闲连接最大存活时间
+      idle_timeout: "60s"
 
-  # 发信限流与风控
-  rate_limit:
-    # 每秒最大发信速率限制 (<=0 表示不限制)
-    emails_per_second: 50
-    # 单封邮件最大允许收件人数
-    max_recipients_per_email: 50
+    # 发信限流与风控
+    rate_limit:
+      # 每秒最大发信速率限制 (<=0 表示不限制)
+      emails_per_second: 50
+      # 单封邮件最大允许收件人数
+      max_recipients_per_email: 50
+
+  # 可选：声明额外的业务发信账号 (例如营销邮件账号 marketing)
+  # marketing:
+  #   host: "smtp.mailgun.org"
+  #   port: 587
+  #   username: "postmaster@mg.example.com"
+  #   password: "marketing_api_key"
+  #   from: "marketing@news.example.com"
+  #   from_name: "MailBaby Marketing"
+  #   encryption: "STARTTLS"
+  #   rate_limit:
+  #     emails_per_second: 20
+  #     max_recipients_per_email: 100
+
+  # 可选：声明告警通知账号 (例如 alert)
+  # alert:
+  #   host: "smtp.sendgrid.net"
+  #   port: 465
+  #   username: "apikey"
+  #   password: "sendgrid_api_key"
+  #   from: "alert@monitor.example.com"
+  #   from_name: "Ops Alert System"
+  #   encryption: "SSL"
+
 
 # ------------------------------------------------------------------------------
 # 4. 消息队列配置 (Queue)
