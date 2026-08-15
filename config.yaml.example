@@ -123,10 +123,12 @@ smtp:
 
     # Rate Limiting & Safety Controls
     rate_limit:
-      # Maximum sending rate in emails per second (<=0 means unlimited)
+      # Maximum sending rate in emails per second (<=0 means unlimited; hard-capped at 10000)
       emails_per_second: 50
       # Maximum recipients allowed per single email message (0 means unlimited)
       max_recipients_per_email: 50
+      # Maximum email payload size in bytes (0 = unlimited; default 15MB)
+      email_size_limit: 15728640
 
   # Optional secondary account: Marketing emails
   # marketing:

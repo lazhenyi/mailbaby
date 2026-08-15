@@ -13,6 +13,7 @@ mailbaby.exe
 # Local Configurations & Secrets
 .env
 .env.*
+config.yaml
 config.local.yaml
 *.local.yaml
 

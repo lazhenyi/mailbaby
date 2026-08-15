@@ -1,7 +1,7 @@
 # ==============================================================================
 # Build Stage: Compile statically-linked Go binary
 # ==============================================================================
-FROM golang:alpine AS builder
+FROM golang:1.26-alpine AS builder
 
 # Install build prerequisites and system certificates
 RUN apk --no-cache add ca-certificates git tzdata
@@ -32,7 +32,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 # ==============================================================================
 # Final Stage: Minimal, secure runtime container
 # ==============================================================================
-FROM alpine:3.20 AS final
+FROM alpine:3.22 AS final
 
 # Install runtime SSL certificates and timezone data
 RUN apk --no-cache add ca-certificates tzdata
