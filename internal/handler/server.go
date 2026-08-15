@@ -15,8 +15,28 @@ import (
 	"mailbaby/internal/config"
 	"mailbaby/internal/logger"
 	"mailbaby/internal/metrics"
+	"mailbaby/internal/queue"
+	"mailbaby/internal/sender"
 	"mailbaby/internal/tracing"
 )
+
+// Option configures Server options.
+type Option func(*Server)
+
+// WithSender configures the SMTP sender for direct HTTP email delivery.
+func WithSender(s sender.Sender) Option {
+	return func(srv *Server) {
+		srv.sender = s
+	}
+}
+
+// WithProducer configures the queue producer for asynchronous HTTP email delivery.
+func WithProducer(p queue.Producer, queueName string) Option {
+	return func(srv *Server) {
+		srv.producer = p
+		srv.queueName = queueName
+	}
+}
 
 // Server coordinates HTTP endpoints for health probes, Prometheus metrics, and pprof profiling.
 type Server struct {
@@ -24,6 +44,9 @@ type Server struct {
 	mux        *http.ServeMux
 	httpServer *http.Server
 	health     *HealthManager
+	sender     sender.Sender
+	producer   queue.Producer
+	queueName  string
 	mu         sync.Mutex
 	running    bool
 }
@@ -39,7 +62,7 @@ func (w *statusResponseWriter) WriteHeader(code int) {
 }
 
 // New creates and configures the unified HTTP Server based on configuration.
-func New(cfg *config.Config) (*Server, error) {
+func New(cfg *config.Config, opts ...Option) (*Server, error) {
 	if cfg == nil {
 		return nil, errors.New("handler: config cannot be nil")
 	}
@@ -73,6 +96,21 @@ func New(cfg *config.Config) (*Server, error) {
 	// 3. Mount Pprof Profiler if enabled
 	if cfg.Observability.Pprof.Enabled {
 		MountPprof(mux, cfg.Observability.Pprof)
+	}
+
+	srv := &Server{
+		cfg:       cfg,
+		mux:       mux,
+		health:    healthMgr,
+	}
+
+	for _, opt := range opts {
+		opt(srv)
+	}
+
+	// 4. Mount Email Sending Routes if Sender or Producer configured
+	if srv.sender != nil || srv.producer != nil {
+		srv.MountEmailRoutes()
 	}
 
 	readTimeout := cfg.Server.ReadTimeout
@@ -233,4 +271,16 @@ func (s *Server) Stop(ctx context.Context) error {
 // HealthManager returns the internal health manager.
 func (s *Server) HealthManager() *HealthManager {
 	return s.health
+}
+
+// MountEmailRoutes mounts email delivery HTTP endpoints with authentication middleware.
+func (s *Server) MountEmailRoutes() {
+	s.assertNotRunning()
+	emailH := NewEmailHandler(s.sender, s.producer, s.queueName)
+	authMW := AuthMiddleware(s.cfg.Auth)
+
+	s.mux.Handle("POST /v1/email/send", authMW(http.HandlerFunc(emailH.HandleSend)))
+	s.mux.Handle("POST /api/v1/send", authMW(http.HandlerFunc(emailH.HandleSend)))
+	s.mux.Handle("POST /v1/email/batch", authMW(http.HandlerFunc(emailH.HandleBatchSend)))
+	s.mux.Handle("POST /api/v1/batch", authMW(http.HandlerFunc(emailH.HandleBatchSend)))
 }
