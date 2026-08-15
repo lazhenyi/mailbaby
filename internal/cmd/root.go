@@ -69,8 +69,8 @@ func ExecuteArgs(args []string) error {
 	var debug bool
 	var env string
 
-	fs.StringVar(&configPath, "config", "config.yaml", "Path to configuration file")
-	fs.StringVar(&configPath, "c", "config.yaml", "Path to configuration file (shorthand)")
+	fs.StringVar(&configPath, "config", "", "Path to configuration file (default: config.yaml)")
+	fs.StringVar(&configPath, "c", "", "Path to configuration file (shorthand)")
 	fs.BoolVar(&showVersion, "version", false, "Show version and build metadata")
 	fs.BoolVar(&showVersion, "v", false, "Show version (shorthand)")
 	fs.BoolVar(&showHelp, "help", false, "Show help usage information")
@@ -117,11 +117,7 @@ func ExecuteArgs(args []string) error {
 	// Load configuration
 	cfg, err := config.Load(configPath)
 	if err != nil {
-		// Fallback to default config if file is missing
-		cfg, err = config.Load("")
-		if err != nil {
-			return fmt.Errorf("cmd: failed to load configuration: %w", err)
-		}
+		return fmt.Errorf("cmd: failed to load configuration: %w", err)
 	}
 
 	if debug {
