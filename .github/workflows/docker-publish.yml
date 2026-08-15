@@ -1,0 +1,105 @@
+name: Docker Hub Publish
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - 'v*.*.*'
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      push:
+        description: 'Push image to Docker Hub'
+        required: true
+        type: boolean
+        default: true
+      tag_name:
+        description: 'Optional custom image tag (e.g. v1.0.0, dev-test)'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  docker-publish:
+    name: Build & Push Multi-Arch Image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract build metadata
+        id: metadata
+        run: |
+          VERSION=$(cat VERSION 2>/dev/null | tr -d '\r\n' || echo "1.0.0")
+          COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "dev")
+          BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          echo "COMMIT=${COMMIT}" >> $GITHUB_ENV
+          echo "BUILD_DATE=${BUILD_DATE}" >> $GITHUB_ENV
+
+      - name: Set up QEMU (Multi-platform emulation)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: all
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Determine Docker repository name
+        id: repo
+        run: |
+          USERNAME="${{ secrets.DOCKER_USERNAME || secrets.DOCKERHUB_USERNAME }}"
+          if [ -n "$USERNAME" ]; then
+            DOCKER_IMAGE="${USERNAME}/mailbaby"
+          else
+            DOCKER_IMAGE="mailbaby/mailbaby"
+          fi
+          echo "image=${DOCKER_IMAGE}" >> $GITHUB_OUTPUT
+
+      - name: Log in to Docker Hub
+        if: ${{ (secrets.DOCKER_USERNAME != '' && secrets.DOCKER_PASSWORD != '') || (secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '') }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME || secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD || secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract Docker metadata (Tags & Labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.repo.outputs.image }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=ref,event=branch
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ inputs.tag_name }},enable=${{ inputs.tag_name != '' }}
+            type=sha,prefix=sha-
+          labels: |
+            org.opencontainers.image.title=MailBaby
+            org.opencontainers.image.description=High-performance, multi-protocol email sending microservice
+            org.opencontainers.image.vendor=MailBaby Authors
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./build/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.push == true)) && (secrets.DOCKER_USERNAME != '' || secrets.DOCKERHUB_USERNAME != '') }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ env.VERSION }}
+            COMMIT=${{ env.COMMIT }}
+            BUILD_DATE=${{ env.BUILD_DATE }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
