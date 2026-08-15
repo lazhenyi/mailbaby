@@ -5,7 +5,7 @@
 BINARY_NAME   := mailbaby
 BUILD_DIR     := build/bin
 CONFIG_FILE   := config.yaml
-VERSION       ?= 1.0.0
+VERSION       ?= $(shell cat VERSION 2>/dev/null | tr -d '\r\n' || echo "1.0.0")
 COMMIT        ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "dev")
 BUILD_DATE    ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 

@@ -55,8 +55,8 @@ RUN mkdir -p /app/logs && chown -R appuser:appgroup /app
 # Switch to non-root user
 USER appuser:appgroup
 
-# Expose unified HTTP server port (Metrics / Health / Pprof)
-EXPOSE 8080
+# Expose unified HTTP server port (8080) and gRPC server port (8081)
+EXPOSE 8080 8081
 
 # Kubernetes / Docker native health check probe
 HEALTHCHECK --interval=15s --timeout=5s --start-period=5s --retries=3 \

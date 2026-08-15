@@ -9,8 +9,8 @@ $RootDir = Split-Path -Parent $ScriptDir
 $OutputDir = Join-Path $RootDir "build\bin"
 $BinaryName = "mailbaby.exe"
 $OutputBin = Join-Path $OutputDir $BinaryName
-
-$Version = if ($env:VERSION) { $env:VERSION } else { "1.0.0" }
+$VersionFile = Join-Path $RootDir "VERSION"
+$Version = if ($env:VERSION) { $env:VERSION } elseif (Test-Path $VersionFile) { (Get-Content $VersionFile -Raw).Trim() } else { "1.0.0" }
 $Commit = try { (git rev-parse --short HEAD 2>$null) } catch { "dev" }
 if (-not $Commit) { $Commit = "dev" }
 $BuildDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")

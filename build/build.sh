@@ -15,7 +15,7 @@ BINARY_NAME="mailbaby"
 OUTPUT_BIN="${OUTPUT_DIR}/${BINARY_NAME}"
 
 # Build metadata
-VERSION="${VERSION:-1.0.0}"
+VERSION="${VERSION:-$(cat "${ROOT_DIR}/VERSION" 2>/dev/null || echo "1.0.0")}"
 COMMIT="${COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo "dev")}"
 BUILD_DATE="${BUILD_DATE:-$(date -u +"%Y-%m-%dT%H:%M:%SZ")}"
 
