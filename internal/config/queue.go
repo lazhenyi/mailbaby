@@ -287,3 +287,27 @@ func (c *QueueConfig) Validate() error {
 		return fmt.Errorf("queue: unsupported queue driver %q", c.Driver)
 	}
 }
+
+// TopicName returns the primary topic or queue name associated with the configured driver.
+func (c *QueueConfig) TopicName() string {
+	switch QueueDriver(strings.ToLower(string(c.Driver))) {
+	case DriverRabbitMQ:
+		return c.RabbitMQ.Queue
+	case DriverKafka:
+		return c.Kafka.Topic
+	case DriverRedis:
+		return c.Redis.Key
+	case DriverRocketMQ:
+		return c.RocketMQ.Topic
+	case DriverNATS:
+		return c.NATS.Subject
+	case DriverPulsar:
+		return c.Pulsar.Topic
+	case DriverSQS:
+		return c.SQS.QueueURL
+	case DriverMemory:
+		return "memory"
+	default:
+		return "default"
+	}
+}

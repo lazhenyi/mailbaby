@@ -32,6 +32,35 @@ server:
   idle_timeout: "30s"
 
 # ------------------------------------------------------------------------------
+# 2.1 gRPC Remote Procedure Call Server Configuration (GRPC)
+# ------------------------------------------------------------------------------
+grpc:
+  # Enable gRPC server
+  enabled: true
+  # Host address to bind
+  host: "0.0.0.0"
+  # Port to listen on
+  port: 8081
+  # Maximum received message size in bytes (default 16MB)
+  max_recv_msg_size: 16777216
+  # Maximum sent message size in bytes (default 16MB)
+  max_send_msg_size: 16777216
+  # Request handling timeout
+  timeout: "30s"
+
+# ------------------------------------------------------------------------------
+# 2.2 Security & Authentication Configuration (Auth / Link Secret)
+# Controls API access authentication for HTTP REST and gRPC endpoints.
+# ------------------------------------------------------------------------------
+auth:
+  # Enable authentication requirement
+  enabled: false
+  # Link secret key / API token for authenticating HTTP & gRPC requests
+  secret_key: "your_secret_key_here"
+  # Custom HTTP header name for API key authentication (also supports Authorization: Bearer <key>)
+  header_name: "X-API-Key"
+
+# ------------------------------------------------------------------------------
 # 3. Logging System Configuration (Log)
 # ------------------------------------------------------------------------------
 log:

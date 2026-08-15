@@ -33,6 +33,8 @@ func (c *AppConfig) Validate() error {
 type Config struct {
 	App           AppConfig           `mapstructure:"app" json:"app" yaml:"app"`
 	Server        ServerConfig        `mapstructure:"server" json:"server" yaml:"server"`
+	GRPC          GrpcConfig          `mapstructure:"grpc" json:"grpc" yaml:"grpc"`
+	Auth          AuthConfig          `mapstructure:"auth" json:"auth" yaml:"auth"`
 	Queue         QueueConfig         `mapstructure:"queue" json:"queue" yaml:"queue"`
 	SMTP          SmtpConfig          `mapstructure:"smtp" json:"smtp" yaml:"smtp"`
 	Log           LogConfig           `mapstructure:"log" json:"log" yaml:"log"`
@@ -46,6 +48,14 @@ func (c *Config) Validate() error {
 	}
 	c.Server.ApplyDefaults()
 	if err := c.Server.Validate(); err != nil {
+		return err
+	}
+	c.GRPC.ApplyDefaults()
+	if err := c.GRPC.Validate(); err != nil {
+		return err
+	}
+	c.Auth.ApplyDefaults()
+	if err := c.Auth.Validate(); err != nil {
 		return err
 	}
 	c.Log.ApplyDefaults()
@@ -174,6 +184,17 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.read_timeout", 10*time.Second)
 	v.SetDefault("server.write_timeout", 10*time.Second)
 	v.SetDefault("server.idle_timeout", 30*time.Second)
+
+	v.SetDefault("grpc.enabled", true)
+	v.SetDefault("grpc.host", "0.0.0.0")
+	v.SetDefault("grpc.port", 8081)
+	v.SetDefault("grpc.max_recv_msg_size", 16*1024*1024)
+	v.SetDefault("grpc.max_send_msg_size", 16*1024*1024)
+	v.SetDefault("grpc.timeout", 30*time.Second)
+
+	v.SetDefault("auth.enabled", false)
+	v.SetDefault("auth.secret_key", "")
+	v.SetDefault("auth.header_name", "X-API-Key")
 
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.format", "text")
