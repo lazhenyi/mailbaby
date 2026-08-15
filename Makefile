@@ -14,12 +14,18 @@ LDFLAGS       := -s -w \
                  -X mailbaby/internal/cmd.Commit=$(COMMIT) \
                  -X mailbaby/internal/cmd.BuildDate=$(BUILD_DATE)
 
-.PHONY: all build run check test clean docker help
+.PHONY: all build run check test proto clean docker help
 
 all: build
 
+## proto: Generate protobuf and gRPC Go stubs from proto/mailbaby.proto
+proto:
+	@echo "==> Generating protobuf stubs..."
+	protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative proto/mailbaby.proto
+	@echo "==> Protobuf code generation complete."
+
 ## build: Compile the binary to build/bin/mailbaby
-build:
+build: proto
 	@mkdir -p $(BUILD_DIR)
 	@echo "==> Compiling $(BINARY_NAME) (version: $(VERSION), commit: $(COMMIT))..."
 	CGO_ENABLED=0 go build -trimpath -ldflags="$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME) .
