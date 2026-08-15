@@ -543,21 +543,341 @@ func TestQueueConfigValidation(t *testing.T) {
 	}
 }
 
-func TestAppAndLogValidation(t *testing.T) {
+func TestAppValidation(t *testing.T) {
 	app := AppConfig{Name: ""}
 	if err := app.Validate(); err == nil {
 		t.Error("expected error for empty app name, got nil")
 	}
+}
 
-	logInvalidLevel := LogConfig{Level: "super_verbose"}
-	if err := logInvalidLevel.Validate(); err == nil {
+func TestLogConfigValidation(t *testing.T) {
+	valid := LogConfig{
+		Level:          LogLevelDebug,
+		Format:         LogFormatJSON,
+		Output:         LogOutputBoth,
+		FilePath:       "./logs/app.log",
+		MaxSize:        50,
+		MaxBackups:     10,
+		MaxAge:         30,
+		Compress:       true,
+		ShowCaller:     true,
+		ShowStacktrace: "warn",
+		Async:          true,
+		BufferSize:     8192,
+	}
+	valid.ApplyDefaults()
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("expected valid log config, got: %v", err)
+	}
+	if !valid.IsDebug() {
+		t.Error("expected IsDebug() true for LogLevelDebug")
+	}
+	if !valid.IsJSON() {
+		t.Error("expected IsJSON() true for LogFormatJSON")
+	}
+
+	invalidLevel := LogConfig{Level: "super_verbose"}
+	if err := invalidLevel.Validate(); err == nil {
 		t.Error("expected error for invalid log level, got nil")
 	}
 
-	logFileMissingPath := LogConfig{Output: "file", FilePath: ""}
-	if err := logFileMissingPath.Validate(); err == nil {
+	invalidFormat := LogConfig{Format: "xml"}
+	if err := invalidFormat.Validate(); err == nil {
+		t.Error("expected error for invalid log format, got nil")
+	}
+
+	invalidOutput := LogConfig{Output: "cloudwatch"}
+	if err := invalidOutput.Validate(); err == nil {
+		t.Error("expected error for invalid log output, got nil")
+	}
+
+	fileMissingPath := LogConfig{Output: LogOutputFile, FilePath: ""}
+	if err := fileMissingPath.Validate(); err == nil {
 		t.Error("expected error for file output with missing path, got nil")
 	}
+
+	bothMissingPath := LogConfig{Output: LogOutputBoth, FilePath: ""}
+	if err := bothMissingPath.Validate(); err == nil {
+		t.Error("expected error for both output with missing path, got nil")
+	}
+
+	negMaxSize := LogConfig{MaxSize: -1}
+	if err := negMaxSize.Validate(); err == nil {
+		t.Error("expected error for negative max_size, got nil")
+	}
+
+	negMaxBackups := LogConfig{MaxBackups: -1}
+	if err := negMaxBackups.Validate(); err == nil {
+		t.Error("expected error for negative max_backups, got nil")
+	}
+
+	negMaxAge := LogConfig{MaxAge: -1}
+	if err := negMaxAge.Validate(); err == nil {
+		t.Error("expected error for negative max_age, got nil")
+	}
+}
+
+func TestMetricsConfigValidation(t *testing.T) {
+	// Disabled metrics does not trigger validation errors
+	disabled := MetricsConfig{Enabled: false, Port: 0}
+	if err := disabled.Validate(); err != nil {
+		t.Errorf("expected no error for disabled metrics, got %v", err)
+	}
+
+	validProm := MetricsConfig{
+		Enabled:  true,
+		Provider: MetricsProviderPrometheus,
+		Host:     "0.0.0.0",
+		Port:     9090,
+		Path:     "/metrics",
+	}
+	validProm.ApplyDefaults()
+	if err := validProm.Validate(); err != nil {
+		t.Fatalf("expected valid prometheus config, got %v", err)
+	}
+	if validProm.Address() != "0.0.0.0:9090" {
+		t.Errorf("expected address '0.0.0.0:9090', got %q", validProm.Address())
+	}
+
+	invalidProvider := MetricsConfig{Enabled: true, Provider: "datadog", Port: 9090, Path: "/metrics"}
+	if err := invalidProvider.Validate(); err == nil {
+		t.Error("expected error for unsupported metrics provider, got nil")
+	}
+
+	invalidPort := MetricsConfig{Enabled: true, Provider: MetricsProviderPrometheus, Port: 80000, Path: "/metrics"}
+	if err := invalidPort.Validate(); err == nil {
+		t.Error("expected error for invalid port 80000, got nil")
+	}
+
+	invalidPath := MetricsConfig{Enabled: true, Provider: MetricsProviderPrometheus, Port: 9090, Path: "metrics"}
+	if err := invalidPath.Validate(); err == nil {
+		t.Error("expected error for path not starting with '/', got nil")
+	}
+
+	missingStatsDAddr := MetricsConfig{Enabled: true, Provider: MetricsProviderStatsD, Port: 9090, Path: "/metrics"}
+	if err := missingStatsDAddr.Validate(); err == nil {
+		t.Error("expected error for missing statsd address, got nil")
+	}
+
+	validStatsD := MetricsConfig{
+		Enabled:  true,
+		Provider: MetricsProviderStatsD,
+		Port:     9090,
+		Path:     "/metrics",
+		StatsD: StatsDConfig{
+			Address: "127.0.0.1:8125",
+			Prefix:  "mailbaby.",
+		},
+	}
+	if err := validStatsD.Validate(); err != nil {
+		t.Fatalf("expected valid statsd config, got %v", err)
+	}
+
+	pushgatewayMissingURL := MetricsConfig{
+		Enabled:  true,
+		Provider: MetricsProviderPrometheus,
+		Port:     9090,
+		Path:     "/metrics",
+		PushGateway: PushGatewayConfig{
+			Enabled: true,
+			URL:     "",
+		},
+	}
+	if err := pushgatewayMissingURL.Validate(); err == nil {
+		t.Error("expected error for pushgateway missing url, got nil")
+	}
+
+	pushgatewayInvalidURL := MetricsConfig{
+		Enabled:  true,
+		Provider: MetricsProviderPrometheus,
+		Port:     9090,
+		Path:     "/metrics",
+		PushGateway: PushGatewayConfig{
+			Enabled: true,
+			URL:     "://invalid-url",
+			Job:     "job1",
+		},
+	}
+	if err := pushgatewayInvalidURL.Validate(); err == nil {
+		t.Error("expected error for invalid pushgateway url, got nil")
+	}
+
+	pushgatewayMissingJob := MetricsConfig{
+		Enabled:  true,
+		Provider: MetricsProviderPrometheus,
+		Port:     9090,
+		Path:     "/metrics",
+		PushGateway: PushGatewayConfig{
+			Enabled: true,
+			URL:     "http://127.0.0.1:9091",
+			Job:     "",
+		},
+	}
+	if err := pushgatewayMissingJob.Validate(); err == nil {
+		t.Error("expected error for missing pushgateway job name, got nil")
+	}
+}
+
+func TestObservabilityValidation(t *testing.T) {
+	// Tracing
+	t.Run("tracing validation", func(t *testing.T) {
+		validTracing := TracingConfig{
+			Enabled:     true,
+			Provider:    TracingProviderOTel,
+			Endpoint:    "localhost:4317",
+			SampleRate:  0.5,
+			ServiceName: "mailbaby-tracer",
+		}
+		validTracing.ApplyDefaults()
+		if err := validTracing.Validate(); err != nil {
+			t.Fatalf("expected valid tracing config, got %v", err)
+		}
+
+		missingEndpoint := TracingConfig{
+			Enabled:  true,
+			Provider: TracingProviderOTel,
+			Endpoint: "",
+		}
+		if err := missingEndpoint.Validate(); err == nil {
+			t.Error("expected error for missing endpoint when provider is otlp, got nil")
+		}
+
+		invalidSampleRate := TracingConfig{
+			Enabled:    true,
+			Provider:   TracingProviderOTel,
+			Endpoint:   "localhost:4317",
+			SampleRate: 1.5,
+		}
+		if err := invalidSampleRate.Validate(); err == nil {
+			t.Error("expected error for sample_rate > 1.0, got nil")
+		}
+
+		negSampleRate := TracingConfig{
+			Enabled:    true,
+			Provider:   TracingProviderOTel,
+			Endpoint:   "localhost:4317",
+			SampleRate: -0.1,
+		}
+		if err := negSampleRate.Validate(); err == nil {
+			t.Error("expected error for sample_rate < 0, got nil")
+		}
+
+		unsupportedProvider := TracingConfig{
+			Enabled:  true,
+			Provider: "dynatrace",
+		}
+		if err := unsupportedProvider.Validate(); err == nil {
+			t.Error("expected error for unsupported tracing provider, got nil")
+		}
+
+		stdoutNoEndpointOk := TracingConfig{
+			Enabled:    true,
+			Provider:   TracingProviderStdout,
+			SampleRate: 1.0,
+		}
+		if err := stdoutNoEndpointOk.Validate(); err != nil {
+			t.Errorf("expected stdout provider to not require endpoint, got %v", err)
+		}
+	})
+
+	// Health
+	t.Run("health validation", func(t *testing.T) {
+		validHealth := HealthConfig{
+			Enabled:   true,
+			Host:      "0.0.0.0",
+			Port:      8080,
+			LivePath:  "/livez",
+			ReadyPath: "/readyz",
+		}
+		validHealth.ApplyDefaults()
+		if err := validHealth.Validate(); err != nil {
+			t.Fatalf("expected valid health config, got %v", err)
+		}
+
+		invalidPort := HealthConfig{
+			Enabled:   true,
+			Port:      0,
+			LivePath:  "/livez",
+			ReadyPath: "/readyz",
+		}
+		if err := invalidPort.Validate(); err == nil {
+			t.Error("expected error for invalid port, got nil")
+		}
+
+		invalidLivePath := HealthConfig{
+			Enabled:   true,
+			Port:      8080,
+			LivePath:  "livez",
+			ReadyPath: "/readyz",
+		}
+		if err := invalidLivePath.Validate(); err == nil {
+			t.Error("expected error for live_path missing leading '/', got nil")
+		}
+
+		invalidReadyPath := HealthConfig{
+			Enabled:   true,
+			Port:      8080,
+			LivePath:  "/livez",
+			ReadyPath: "readyz",
+		}
+		if err := invalidReadyPath.Validate(); err == nil {
+			t.Error("expected error for ready_path missing leading '/', got nil")
+		}
+	})
+
+	// Pprof
+	t.Run("pprof validation", func(t *testing.T) {
+		validPprof := PprofConfig{
+			Enabled: true,
+			Host:    "127.0.0.1",
+			Port:    6060,
+			Path:    "/debug/pprof",
+		}
+		validPprof.ApplyDefaults()
+		if err := validPprof.Validate(); err != nil {
+			t.Fatalf("expected valid pprof config, got %v", err)
+		}
+
+		invalidPort := PprofConfig{
+			Enabled: true,
+			Port:    -1,
+			Path:    "/debug/pprof",
+		}
+		if err := invalidPort.Validate(); err == nil {
+			t.Error("expected error for invalid pprof port, got nil")
+		}
+
+		invalidPath := PprofConfig{
+			Enabled: true,
+			Port:    6060,
+			Path:    "debug/pprof",
+		}
+		if err := invalidPath.Validate(); err == nil {
+			t.Error("expected error for pprof path without '/', got nil")
+		}
+	})
+
+	// Observability umbrella
+	t.Run("umbrella validation", func(t *testing.T) {
+		obs := ObservabilityConfig{
+			Tracing: TracingConfig{
+				Enabled:  true,
+				Provider: TracingProviderOTel,
+				Endpoint: "localhost:4317",
+			},
+			Health: HealthConfig{
+				Enabled: true,
+				Port:    8080,
+			},
+			Pprof: PprofConfig{
+				Enabled: true,
+				Port:    6060,
+			},
+		}
+		if err := obs.Validate(); err != nil {
+			t.Fatalf("expected valid observability config, got %v", err)
+		}
+	})
 }
 
 func TestLoadFromFile(t *testing.T) {
@@ -587,6 +907,35 @@ smtp:
     from: "marketing@example.org"
 log:
   level: "warn"
+  format: "json"
+  output: "stdout"
+  show_caller: true
+  async: true
+  buffer_size: 2048
+metrics:
+  enabled: true
+  provider: "prometheus"
+  host: "127.0.0.1"
+  port: 9100
+  path: "/metrics"
+  collect_runtime: true
+  collect_queue_stats: true
+  collect_smtp_stats: true
+observability:
+  tracing:
+    enabled: true
+    provider: "otlp"
+    endpoint: "localhost:4317"
+    sample_rate: 0.8
+  health:
+    enabled: true
+    port: 8081
+    live_path: "/livez"
+    ready_path: "/readyz"
+  pprof:
+    enabled: true
+    port: 6061
+    path: "/debug/pprof"
 `
 	if _, err := tempFile.Write([]byte(content)); err != nil {
 		t.Fatalf("failed to write temp file: %v", err)
@@ -627,9 +976,66 @@ log:
 	if cfg.Log.Level != "warn" {
 		t.Errorf("expected log.level 'warn', got %q", cfg.Log.Level)
 	}
+	if !cfg.Log.IsJSON() {
+		t.Errorf("expected log.format json, got %q", cfg.Log.Format)
+	}
+	if !cfg.Log.ShowCaller {
+		t.Error("expected log.show_caller true")
+	}
+	if !cfg.Log.Async || cfg.Log.BufferSize != 2048 {
+		t.Errorf("expected log.async true with buffer_size 2048, got %v / %d", cfg.Log.Async, cfg.Log.BufferSize)
+	}
+
+	if !cfg.Metrics.Enabled || cfg.Metrics.Port != 9100 {
+		t.Errorf("expected metrics enabled on port 9100, got %v / %d", cfg.Metrics.Enabled, cfg.Metrics.Port)
+	}
+
+	if !cfg.Observability.Tracing.Enabled || cfg.Observability.Tracing.Endpoint != "localhost:4317" {
+		t.Errorf("expected tracing enabled with endpoint localhost:4317")
+	}
+	if cfg.Observability.Tracing.SampleRate != 0.8 {
+		t.Errorf("expected sample_rate 0.8, got %f", cfg.Observability.Tracing.SampleRate)
+	}
+	if !cfg.Observability.Health.Enabled || cfg.Observability.Health.Port != 8081 {
+		t.Errorf("expected health enabled on port 8081")
+	}
+	if !cfg.Observability.Pprof.Enabled || cfg.Observability.Pprof.Port != 6061 {
+		t.Errorf("expected pprof enabled on port 6061")
+	}
 
 	global := Get()
 	if global == nil || global.App.Name != "mailbaby-test-file" {
 		t.Errorf("expected global config to be set correctly")
+	}
+}
+
+func TestObservabilityEnvOverride(t *testing.T) {
+	t.Setenv("MAILBABY_METRICS_ENABLED", "true")
+	t.Setenv("MAILBABY_METRICS_PORT", "9200")
+	t.Setenv("MAILBABY_OBSERVABILITY_TRACING_ENABLED", "true")
+	t.Setenv("MAILBABY_OBSERVABILITY_TRACING_ENDPOINT", "otel-collector:4317")
+	t.Setenv("MAILBABY_OBSERVABILITY_HEALTH_ENABLED", "true")
+	t.Setenv("MAILBABY_OBSERVABILITY_HEALTH_PORT", "8090")
+
+	yamlContent := `
+smtp:
+  default:
+    host: "smtp.example.com"
+    port: 587
+    from: "sender@example.com"
+`
+	cfg, err := LoadFromBytes([]byte(yamlContent), "yaml")
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	if !cfg.Metrics.Enabled || cfg.Metrics.Port != 9200 {
+		t.Errorf("expected metrics port 9200 from env, got %v / %d", cfg.Metrics.Enabled, cfg.Metrics.Port)
+	}
+	if !cfg.Observability.Tracing.Enabled || cfg.Observability.Tracing.Endpoint != "otel-collector:4317" {
+		t.Errorf("expected tracing endpoint 'otel-collector:4317', got %q", cfg.Observability.Tracing.Endpoint)
+	}
+	if !cfg.Observability.Health.Enabled || cfg.Observability.Health.Port != 8090 {
+		t.Errorf("expected health port 8090, got %d", cfg.Observability.Health.Port)
 	}
 }

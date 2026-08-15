@@ -30,53 +30,34 @@ func (c *AppConfig) Validate() error {
 	return nil
 }
 
-type LogConfig struct {
-	Level      string `mapstructure:"level" json:"level" yaml:"level"`
-	Format     string `mapstructure:"format" json:"format" yaml:"format"`
-	Output     string `mapstructure:"output" json:"output" yaml:"output"`
-	FilePath   string `mapstructure:"file_path" json:"file_path" yaml:"file_path"`
-	MaxSize    int    `mapstructure:"max_size" json:"max_size" yaml:"max_size"`
-	MaxBackups int    `mapstructure:"max_backups" json:"max_backups" yaml:"max_backups"`
-	MaxAge     int    `mapstructure:"max_age" json:"max_age" yaml:"max_age"`
-	Compress   bool   `mapstructure:"compress" json:"compress" yaml:"compress"`
-}
-
-func (c *LogConfig) Validate() error {
-	level := strings.ToLower(strings.TrimSpace(c.Level))
-	switch level {
-	case "debug", "info", "warn", "error":
-	case "":
-	default:
-		return fmt.Errorf("log: invalid level %q (must be debug, info, warn, or error)", c.Level)
-	}
-
-	format := strings.ToLower(strings.TrimSpace(c.Format))
-	switch format {
-	case "json", "text":
-	case "":
-	default:
-		return fmt.Errorf("log: invalid format %q (must be json or text)", c.Format)
-	}
-
-	output := strings.ToLower(strings.TrimSpace(c.Output))
-	if output == "file" && strings.TrimSpace(c.FilePath) == "" {
-		return errors.New("log: file_path is required when output is 'file'")
-	}
-	return nil
-}
-
 type Config struct {
-	App   AppConfig   `mapstructure:"app" json:"app" yaml:"app"`
-	Queue QueueConfig `mapstructure:"queue" json:"queue" yaml:"queue"`
-	SMTP  SmtpConfig  `mapstructure:"smtp" json:"smtp" yaml:"smtp"`
-	Log   LogConfig   `mapstructure:"log" json:"log" yaml:"log"`
+	App           AppConfig           `mapstructure:"app" json:"app" yaml:"app"`
+	Server        ServerConfig        `mapstructure:"server" json:"server" yaml:"server"`
+	Queue         QueueConfig         `mapstructure:"queue" json:"queue" yaml:"queue"`
+	SMTP          SmtpConfig          `mapstructure:"smtp" json:"smtp" yaml:"smtp"`
+	Log           LogConfig           `mapstructure:"log" json:"log" yaml:"log"`
+	Metrics       MetricsConfig       `mapstructure:"metrics" json:"metrics" yaml:"metrics"`
+	Observability ObservabilityConfig `mapstructure:"observability" json:"observability" yaml:"observability"`
 }
 
 func (c *Config) Validate() error {
 	if err := c.App.Validate(); err != nil {
 		return err
 	}
+	c.Server.ApplyDefaults()
+	if err := c.Server.Validate(); err != nil {
+		return err
+	}
+	c.Log.ApplyDefaults()
 	if err := c.Log.Validate(); err != nil {
+		return err
+	}
+	c.Metrics.ApplyDefaults()
+	if err := c.Metrics.Validate(); err != nil {
+		return err
+	}
+	c.Observability.ApplyDefaults()
+	if err := c.Observability.Validate(); err != nil {
 		return err
 	}
 	if err := c.SMTP.Validate(); err != nil {
@@ -188,6 +169,12 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("app.debug", false)
 	v.SetDefault("app.shutdown_timeout", 10*time.Second)
 
+	v.SetDefault("server.host", "0.0.0.0")
+	v.SetDefault("server.port", 8080)
+	v.SetDefault("server.read_timeout", 10*time.Second)
+	v.SetDefault("server.write_timeout", 10*time.Second)
+	v.SetDefault("server.idle_timeout", 30*time.Second)
+
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.format", "text")
 	v.SetDefault("log.output", "stdout")
@@ -196,6 +183,55 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("log.max_backups", 3)
 	v.SetDefault("log.max_age", 7)
 	v.SetDefault("log.compress", true)
+	v.SetDefault("log.show_caller", false)
+	v.SetDefault("log.show_stacktrace", "error")
+	v.SetDefault("log.async", false)
+	v.SetDefault("log.buffer_size", 4096)
+
+	v.SetDefault("metrics.enabled", false)
+	v.SetDefault("metrics.provider", string(MetricsProviderPrometheus))
+	v.SetDefault("metrics.host", "0.0.0.0")
+	v.SetDefault("metrics.port", 9090)
+	v.SetDefault("metrics.path", "/metrics")
+	v.SetDefault("metrics.collect_runtime", true)
+	v.SetDefault("metrics.runtime_interval", 10*time.Second)
+	v.SetDefault("metrics.collect_queue_stats", true)
+	v.SetDefault("metrics.collect_smtp_stats", true)
+	v.SetDefault("metrics.statsd.address", "")
+	v.SetDefault("metrics.statsd.prefix", "")
+	v.SetDefault("metrics.statsd.flush_interval", 100*time.Millisecond)
+	v.SetDefault("metrics.pushgateway.enabled", false)
+	v.SetDefault("metrics.pushgateway.url", "")
+	v.SetDefault("metrics.pushgateway.job", "mailbaby")
+	v.SetDefault("metrics.pushgateway.interval", 15*time.Second)
+	v.SetDefault("metrics.pushgateway.basic_auth.username", "")
+	v.SetDefault("metrics.pushgateway.basic_auth.password", "")
+
+	v.SetDefault("observability.tracing.enabled", false)
+	v.SetDefault("observability.tracing.provider", string(TracingProviderOTel))
+	v.SetDefault("observability.tracing.endpoint", "")
+	v.SetDefault("observability.tracing.insecure", false)
+	v.SetDefault("observability.tracing.sample_rate", 1.0)
+	v.SetDefault("observability.tracing.service_name", "")
+	v.SetDefault("observability.tracing.batch_timeout", 5*time.Second)
+	v.SetDefault("observability.tracing.max_queue_size", 2048)
+	v.SetDefault("observability.tracing.export_timeout", 30*time.Second)
+
+	v.SetDefault("observability.health.enabled", false)
+	v.SetDefault("observability.health.host", "0.0.0.0")
+	v.SetDefault("observability.health.port", 8080)
+	v.SetDefault("observability.health.live_path", "/livez")
+	v.SetDefault("observability.health.ready_path", "/readyz")
+	v.SetDefault("observability.health.check_timeout", 5*time.Second)
+
+	v.SetDefault("observability.pprof.enabled", false)
+	v.SetDefault("observability.pprof.host", "127.0.0.1")
+	v.SetDefault("observability.pprof.port", 6060)
+	v.SetDefault("observability.pprof.path", "/debug/pprof")
+	v.SetDefault("observability.pprof.profile_mutex", false)
+	v.SetDefault("observability.pprof.profile_block", false)
+	v.SetDefault("observability.pprof.block_rate", 0)
+	v.SetDefault("observability.pprof.mutex_rate", 0)
 
 	v.SetDefault("queue.driver", string(DriverMemory))
 	v.SetDefault("queue.concurrency", 10)

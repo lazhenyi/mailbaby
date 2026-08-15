@@ -17,16 +17,31 @@ app:
   shutdown_timeout: "10s"
 
 # ------------------------------------------------------------------------------
-# 2. 日志系统配置 (Log)
+# 2. 统一 HTTP 服务配置 (Server - Metrics / Health / Pprof)
+# ------------------------------------------------------------------------------
+server:
+  # 监听地址
+  host: "0.0.0.0"
+  # 监听端口
+  port: 8080
+  # 请求读取超时
+  read_timeout: "10s"
+  # 响应写入超时
+  write_timeout: "10s"
+  # 空闲连接超时
+  idle_timeout: "30s"
+
+# ------------------------------------------------------------------------------
+# 3. 日志系统配置 (Log)
 # ------------------------------------------------------------------------------
 log:
-  # 日志级别: debug | info | warn | error
-  level: "debug"
-  # 日志输出格式: json | text
+  # 日志级别: trace | debug | info | warn | error | fatal | panic
+  level: "info"
+  # 日志输出格式: json | text | console | logfmt
   format: "text"
-  # 输出目标: stdout | stderr | file
+  # 输出目标: stdout | stderr | file | both
   output: "stdout"
-  # 当 output 为 file 时的日志存储路径
+  # 当 output 为 file 或 both 时的日志存储路径
   file_path: "./logs/mailbaby.log"
   # 单个日志文件最大尺寸 (MB)
   max_size: 100
@@ -36,6 +51,16 @@ log:
   max_age: 7
   # 是否压缩旧日志文件 (gzip)
   compress: true
+  # 是否打印调用者源码文件名和行号
+  show_caller: false
+  # 打印堆栈信息的最低级别: none | warn | error | panic
+  show_stacktrace: "error"
+  # 自定义时间格式 (如 2006-01-02 15:04:05 或 RFC3339)
+  time_format: ""
+  # 是否开启异步日志缓冲写入 (提升极端高并发吞吐)
+  async: false
+  # 异步模式下的 Channel 缓冲区大小
+  buffer_size: 4096
 
 # ------------------------------------------------------------------------------
 # 3. SMTP 邮件发信服务器配置 (SMTP)
@@ -327,3 +352,112 @@ queue:
   memory:
     # 内存 Channel 缓冲区大小
     buffer_size: 1024
+
+# ------------------------------------------------------------------------------
+# 5. 指标统计与监控监控配置 (Metrics)
+# ------------------------------------------------------------------------------
+metrics:
+  # 是否启用指标收集与 Exporter
+  enabled: true
+  # 指标收集提供商: prometheus | statsd | otlp | expvar | none
+  provider: "prometheus"
+  # 指标暴露监听地址与端口
+  host: "0.0.0.0"
+  port: 9090
+  # HTTP 指标端点路径
+  path: "/metrics"
+
+  # 是否采集 Go 运行时与 GC / 协程状态
+  collect_runtime: true
+  # 运行时状态采样频率
+  runtime_interval: "10s"
+
+  # 是否采集队列深度、消费延迟与吞吐统计
+  collect_queue_stats: true
+  # 是否采集 SMTP 连接池活跃连接、发信延迟与投递成功率统计
+  collect_smtp_stats: true
+
+  # StatsD 客户端配置 (当 provider 为 statsd 时生效)
+  statsd:
+    # StatsD Agent 监听地址
+    address: "127.0.0.1:8125"
+    # 前缀标识
+    prefix: "mailbaby."
+    # 批量刷新间隔
+    flush_interval: "100ms"
+
+  # Prometheus PushGateway 推送配置 (适用于短生命周期任务或批处理作业)
+  pushgateway:
+    enabled: false
+    # PushGateway 服务地址
+    url: "http://127.0.0.1:9091"
+    # 任务标识 Job Name
+    job: "mailbaby_worker"
+    # 推送周期
+    interval: "15s"
+    # Basic 认证凭据 (可选)
+    basic_auth:
+      username: ""
+      password: ""
+
+  # 全局附加的静态 Label 标签 (如 env, region, cluster)
+  custom_labels:
+    service: "mailbaby"
+    # env: "production"
+
+  # 邮件发送与排队延迟的 Histogram 分桶区间 (秒)
+  histogram_buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]
+
+# ------------------------------------------------------------------------------
+# 6. 综合可观察性配置 (Observability: 链路追踪 / 健康检查 / 性能剖析)
+# ------------------------------------------------------------------------------
+observability:
+  # 6.1 分布式链路追踪 (Tracing)
+  tracing:
+    # 是否启用分布式链路追踪
+    enabled: false
+    # 链路追踪提供方: otlp | jaeger | zipkin | stdout | none
+    provider: "otlp"
+    # 收集器接入地址 (如 OTLP gRPC 默认 4317, HTTP 4318, Jaeger 6831)
+    endpoint: "localhost:4317"
+    # 是否跳过 TLS 加密 (用于本地内网测试)
+    insecure: true
+    # 采样率: 0.0 ~ 1.0 (1.0 表示 100% 全量采集采样)
+    sample_rate: 1.0
+    # 追踪服务标识 (留空则默认使用 app.name)
+    service_name: "mailbaby"
+    # 批量上报触发超时
+    batch_timeout: "5s"
+    # 内存最大暂存 Span 队列深度
+    max_queue_size: 2048
+    # 单次导出超时
+    export_timeout: "30s"
+
+  # 6.2 容器探针健康检查 (Health Check: K8s liveness & readiness probes)
+  health:
+    # 是否启用健康检查 HTTP 服务
+    enabled: true
+    # 监听主机与端口
+    host: "0.0.0.0"
+    port: 8080
+    # 存活探针路径 (Liveness Probe)
+    live_path: "/livez"
+    # 就绪探针路径 (Readiness Probe, 校验 DB/MQ/SMTP 就绪情况)
+    ready_path: "/readyz"
+    # 单次检查超时
+    check_timeout: "5s"
+
+  # 6.3 运行时性能剖析 (Pprof)
+  pprof:
+    # 是否启用 Go pprof 性能分析服务
+    enabled: false
+    # 独立监听主机与端口 (建议限制在内网或 127.0.0.1 避免安全暴露)
+    host: "127.0.0.1"
+    port: 6060
+    # 访问根路径
+    path: "/debug/pprof"
+    # 是否记录互斥锁锁争用剖析 (Mutex contention profiling)
+    profile_mutex: false
+    # 是否记录 Goroutine 阻塞剖析 (Block profiling)
+    profile_block: false
+

@@ -4,10 +4,46 @@ app:
   debug: true
   shutdown_timeout: "10s"
 
+server:
+  host: "0.0.0.0"
+  port: 8080
+  read_timeout: "10s"
+  write_timeout: "10s"
+  idle_timeout: "30s"
+
 log:
   level: "info"
   format: "text"
   output: "stdout"
+  show_caller: false
+  show_stacktrace: "error"
+  async: false
+
+metrics:
+  enabled: true
+  provider: "prometheus"
+  path: "/metrics"
+  collect_runtime: true
+  collect_queue_stats: true
+  collect_smtp_stats: true
+
+observability:
+  tracing:
+    enabled: false
+    provider: "otlp"
+    endpoint: "localhost:4317"
+    sample_rate: 1.0
+  health:
+    enabled: true
+    host: "0.0.0.0"
+    port: 8080
+    live_path: "/livez"
+    ready_path: "/readyz"
+  pprof:
+    enabled: false
+    host: "127.0.0.1"
+    port: 6060
+    path: "/debug/pprof"
 
 smtp:
   default:
