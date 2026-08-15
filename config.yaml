@@ -1,0 +1,40 @@
+app:
+  name: "mailbaby"
+  env: "development"
+  debug: true
+  shutdown_timeout: "10s"
+
+log:
+  level: "info"
+  format: "text"
+  output: "stdout"
+
+smtp:
+  host: "smtp.example.com"
+  port: 587
+  username: "noreply@example.com"
+  password: "your_smtp_password"
+  from: "noreply@example.com"
+  from_name: "MailBaby Service"
+  reply_to: "support@example.com"
+  encryption: "Auto"
+  auth_type: "Auto"
+  connect_timeout: "10s"
+  send_timeout: "30s"
+  pool:
+    max_idle_conns: 5
+    max_open_conns: 20
+    idle_timeout: "60s"
+  rate_limit:
+    emails_per_second: 50
+    max_recipients_per_email: 50
+
+queue:
+  driver: "memory"
+  concurrency: 10
+  max_retries: 3
+  retry_interval: "5s"
+  prefetch_count: 10
+  batch_size: 1
+  memory:
+    buffer_size: 1024

@@ -1,0 +1,301 @@
+# ==============================================================================
+# MailBaby 配置文件示例 (config.yaml.example)
+# 基于消息队列的高性能邮件发送程序
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. 基础应用配置 (App)
+# ------------------------------------------------------------------------------
+app:
+  # 应用标识名称
+  name: "mailbaby"
+  # 运行环境: development | test | staging | production
+  env: "development"
+  # 是否开启 Debug 调试模式
+  debug: true
+  # 优雅停机超时时间
+  shutdown_timeout: "10s"
+
+# ------------------------------------------------------------------------------
+# 2. 日志系统配置 (Log)
+# ------------------------------------------------------------------------------
+log:
+  # 日志级别: debug | info | warn | error
+  level: "debug"
+  # 日志输出格式: json | text
+  format: "text"
+  # 输出目标: stdout | stderr | file
+  output: "stdout"
+  # 当 output 为 file 时的日志存储路径
+  file_path: "./logs/mailbaby.log"
+  # 单个日志文件最大尺寸 (MB)
+  max_size: 100
+  # 最多保留的历史日志文件数
+  max_backups: 5
+  # 历史日志最长保留天数
+  max_age: 7
+  # 是否压缩旧日志文件 (gzip)
+  compress: true
+
+# ------------------------------------------------------------------------------
+# 3. SMTP 邮件发信服务器配置 (SMTP)
+# ------------------------------------------------------------------------------
+smtp:
+  # SMTP 服务器地址 (如 smtp.qq.com, smtp.163.com, smtp.gmail.com, smtp.office365.com, 自建 Postfix/Haraka)
+  host: "smtp.example.com"
+  # SMTP 端口: 465 (SSL/TLS), 587 (STARTTLS), 25 (标准明文/中继)
+  port: 587
+  # 认证用户名 / 登录邮箱
+  username: "noreply@example.com"
+  # 认证密码 / 第三方客户端授权码 / API Key
+  password: "your_smtp_password_or_token"
+
+  # 默认发件人邮箱地址
+  from: "noreply@example.com"
+  # 发件人显示名称 (可选)
+  from_name: "MailBaby Notification"
+  # 统一回复地址 (可选)
+  reply_to: "support@example.com"
+
+  # 加密传输模式:
+  #   - Auto: 根据端口自动匹配 (465 走 SSL/TLS，其他走 STARTTLS)
+  #   - SSL / TLS: 强制直接建立 SSL/TLS 加密连接 (通常端口 465)
+  #   - STARTTLS: 建立明文连接后升级 TLS (通常端口 587 / 25)
+  #   - None: 明文传输，不使用加密 (仅限安全内网或测试环境)
+  encryption: "Auto"
+
+  # 是否跳过证书有效性校验 (用于自签名证书或企业内网中继环境)
+  insecure_skip_verify: false
+
+  # HELO / EHLO 问候域名 (留空则默认使用本机 hostname)
+  helo_hostname: ""
+
+  # 身份认证机制:
+  #   - Auto: 自动协商 (优先使用服务端支持的最高安全性机制)
+  #   - PLAIN: SASL PLAIN (大部分服务商支持)
+  #   - LOGIN: SASL LOGIN (国内很多邮箱及传统 SMTP 服务器常用)
+  #   - CRAM-MD5: SASL CRAM-MD5
+  #   - None: 无需身份认证 (开放中继)
+  auth_type: "Auto"
+
+  # 网络与发信超时控制
+  connect_timeout: "10s"
+  send_timeout: "30s"
+  keep_alive: "30s"
+
+  # 发信连接池管理
+  pool:
+    # 最大空闲连接数
+    max_idle_conns: 5
+    # 最大同时并发连接数
+    max_open_conns: 20
+    # 空闲连接最大存活时间
+    idle_timeout: "60s"
+
+  # 发信限流与风控
+  rate_limit:
+    # 每秒最大发信速率限制 (<=0 表示不限制)
+    emails_per_second: 50
+    # 单封邮件最大允许收件人数
+    max_recipients_per_email: 50
+
+# ------------------------------------------------------------------------------
+# 4. 消息队列配置 (Queue)
+# ------------------------------------------------------------------------------
+queue:
+  # 当前激活的消息队列驱动类型:
+  # 支持: rabbitmq | kafka | redis | rocketmq | nats | pulsar | sqs | memory
+  driver: "memory"
+
+  # 消费者通用并发与重试控制
+  # 并发消费 Worker 协程数量
+  concurrency: 10
+  # 邮件发送失败时的最大重试次数
+  max_retries: 3
+  # 失败重试等待间隔
+  retry_interval: "5s"
+  # QoS 预拉取消息数量
+  prefetch_count: 10
+  # 单次批量处理大小
+  batch_size: 1
+
+  # ----------------------------------------------------------------------------
+  # 4.1 RabbitMQ (AMQP 0-9-1) 驱动专属配置
+  # ----------------------------------------------------------------------------
+  rabbitmq:
+    # 完整 AMQP URL (若配置则优先使用: amqp://user:pass@host:port/vhost)
+    url: "amqp://guest:guest@127.0.0.1:5672/"
+    host: "127.0.0.1"
+    port: 5672
+    username: "guest"
+    password: "guest"
+    vhost: "/"
+    # 消费的队列名称
+    queue: "mailbaby_tasks"
+    # 绑定的交换机名称
+    exchange: "mailbaby_exchange"
+    # 路由键
+    routing_key: "mail.send.#"
+    # 队列与交换机是否持久化
+    durable: true
+    # 当无消费者连接时是否自动删除队列
+    auto_delete: false
+    # 是否排他队列
+    exclusive: false
+    # 是否自动确认消息 (生产环境建议 false，待邮件发信成功后再 Ack)
+    auto_ack: false
+    # QoS 单通道预取消息数量
+    prefetch_count: 10
+    # TLS 配置 (可选)
+    tls:
+      enable: false
+      insecure_skip_verify: false
+
+  # ----------------------------------------------------------------------------
+  # 4.2 Apache Kafka 驱动专属配置
+  # ----------------------------------------------------------------------------
+  kafka:
+    # Kafka 集群 Broker 节点地址列表
+    brokers:
+      - "127.0.0.1:9092"
+    # 消费的主题 Topic
+    topic: "mailbaby_tasks"
+    # 消费者组 Group ID
+    group_id: "mailbaby_consumer_group"
+    # 客户端 Client ID
+    client_id: "mailbaby_worker"
+    # Kafka 协议版本 (如 2.8.0, 3.4.0 等)
+    version: "3.4.0"
+    # 首次接入未找到 offset 时的重置策略: oldest (最早) | newest (最新)
+    initial_offset: "newest"
+    # 是否自动提交位移
+    auto_commit: false
+    # SASL 鉴权配置
+    sasl:
+      enable: false
+      # 认证机制: PLAIN | SCRAM-SHA-256 | SCRAM-SHA-512 | GSSAPI
+      mechanism: "PLAIN"
+      user: ""
+      password: ""
+    # TLS 配置
+    tls:
+      enable: false
+      insecure_skip_verify: false
+
+  # ----------------------------------------------------------------------------
+  # 4.3 Redis (Stream / List / PubSub) 驱动专属配置
+  # ----------------------------------------------------------------------------
+  redis:
+    # Redis 节点地址列表 (单机传 1 个，集群或哨兵传多个)
+    addrs:
+      - "127.0.0.1:6379"
+    # 单机 host/port (简易单机配置时使用)
+    host: "127.0.0.1"
+    port: 6379
+    # Redis 6+ ACL 用户名
+    username: ""
+    # Redis 访问密码
+    password: ""
+    # 数据库编号
+    db: 0
+    # 哨兵模式 Master 名称 (若使用 Sentinel 模式)
+    master_name: ""
+    # 工作模式: stream (推荐, 保证 At-Least-Once 与 ACK) | list (BLPOP/BRPOP) | pubsub
+    mode: "stream"
+    # 队列 Key / Stream 名 / 频道名
+    key: "mailbaby:queue:email"
+    # Stream 消费者组名 (mode=stream 时生效)
+    group: "mailbaby_consumer_group"
+    # Stream 消费者标识名称
+    consumer: "worker_node_1"
+    # 阻塞等待新消息超时时间
+    block_time: "2s"
+    # Stream 最大长度近似淘汰限制 (0 表示不限制)
+    max_len: 100000
+
+  # ----------------------------------------------------------------------------
+  # 4.4 Apache RocketMQ 驱动专属配置
+  # ----------------------------------------------------------------------------
+  rocketmq:
+    # NameServer 服务节点地址列表
+    name_servers:
+      - "127.0.0.1:9876"
+    # 消费的主题 Topic
+    topic: "mailbaby_topic"
+    # 消费者组 Consumer Group
+    group: "mailbaby_group"
+    # 访问控制凭证 AccessKey (云厂商或启用 ACL 时配置)
+    access_key: ""
+    secret_key: ""
+    # STS 临时 Token
+    security_token: ""
+    # 实例命名空间 / Instance ID
+    namespace: ""
+    # 是否按照顺序消费
+    consume_orderly: false
+
+  # ----------------------------------------------------------------------------
+  # 4.5 NATS / NATS JetStream 驱动专属配置
+  # ----------------------------------------------------------------------------
+  nats:
+    # NATS 集群服务地址列表
+    servers:
+      - "nats://127.0.0.1:4222"
+    # 订阅主题 Subject
+    subject: "mailbaby.task.send"
+    # 负载均衡消费组 (Queue Group)
+    queue_group: "mailbaby_workers"
+    # 是否启用 JetStream 持久化消息引擎
+    jetstream: true
+    # JetStream Stream 名称
+    stream: "MAILBABY_STREAM"
+    # Durable 消费者名称
+    durable: "mailbaby_worker_consumer"
+    # 认证凭据 (Token / UserPass / CredsFile 选其一)
+    token: ""
+    username: ""
+    password: ""
+    creds_file: ""
+
+  # ----------------------------------------------------------------------------
+  # 4.6 Apache Pulsar 驱动专属配置
+  # ----------------------------------------------------------------------------
+  pulsar:
+    # Pulsar Broker 服务地址
+    url: "pulsar://127.0.0.1:6650"
+    # 消费的主题 Topic (如 persistent://public/default/mailbaby_tasks)
+    topic: "persistent://public/default/mailbaby_tasks"
+    # 订阅名称 Subscription Name
+    subscription_name: "mailbaby_subscription"
+    # 订阅模式: Exclusive | Shared | Failover | Key_Shared
+    subscription_type: "Shared"
+    # JWT Auth Token (可选)
+    auth_token: ""
+
+  # ----------------------------------------------------------------------------
+  # 4.7 AWS SQS 驱动专属配置
+  # ----------------------------------------------------------------------------
+  sqs:
+    # AWS Region (如 us-east-1, ap-northeast-1)
+    region: "us-east-1"
+    # SQS 队列完整 URL
+    queue_url: "https://sqs.us-east-1.amazonaws.com/123456789012/mailbaby-queue"
+    # AWS 凭据 (留空则自动从 ~/.aws/credentials 或 IAM Instance Role 读取)
+    access_key_id: ""
+    secret_access_key: ""
+    session_token: ""
+    # 自定义 Endpoint (如用于 LocalStack 本地模拟: http://127.0.0.1:4566)
+    endpoint: ""
+    # SQS 长轮询等待秒数 (0~20)
+    wait_time_seconds: 20
+    # 消息拉取后不可见超时秒数 (处理超时后重新可见)
+    visibility_timeout: 30
+    # 单次拉取最大消息数量 (1~10)
+    max_number_of_messages: 10
+
+  # ----------------------------------------------------------------------------
+  # 4.8 Memory (本地 Channel 内存队列) 驱动配置
+  # ----------------------------------------------------------------------------
+  memory:
+    # 内存 Channel 缓冲区大小
+    buffer_size: 1024
