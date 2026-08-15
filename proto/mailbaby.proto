@@ -1,0 +1,100 @@
+syntax = "proto3";
+
+package mailbaby.v1;
+
+option go_package = "mailbaby/proto;pb";
+
+// Attachment represents a file attached to an email.
+message Attachment {
+  string filename = 1;
+  string content_type = 2;
+  bytes data = 3;
+  bool inline = 4;
+  string content_id = 5;
+}
+
+// SendMailRequest represents a single email delivery request.
+message SendMailRequest {
+  string id = 1;
+  string account = 2;
+  string from = 3;
+  string from_name = 4;
+  string reply_to = 5;
+  repeated string to = 6;
+  repeated string cc = 7;
+  repeated string bcc = 8;
+  string subject = 9;
+  string text_body = 10;
+  string html_body = 11;
+  map<string, string> headers = 12;
+  repeated Attachment attachments = 13;
+  repeated string tags = 14;
+  map<string, string> metadata = 15;
+  bool async = 16;
+}
+
+// SendMailResponse represents the result of an email delivery request.
+message SendMailResponse {
+  string id = 1;
+  string status = 2; // "sent" or "queued"
+  string message = 3;
+  int64 sent_at = 4; // Unix timestamp in seconds or nanoseconds
+}
+
+// BatchSendMailRequest represents a batch of email delivery requests.
+message BatchSendMailRequest {
+  repeated SendMailRequest emails = 1;
+  bool async = 2;
+}
+
+// BatchSendMailResponse represents the result of a batch email delivery request.
+message BatchSendMailResponse {
+  int32 total = 1;
+  int32 succeeded = 2;
+  int32 failed = 3;
+  repeated SendMailResponse results = 4;
+}
+
+// PingRequest represents a ping/liveness probe.
+message PingRequest {
+  string message = 1;
+}
+
+// PingResponse represents the ping response.
+message PingResponse {
+  string status = 1;
+  string version = 2;
+  int64 timestamp = 3;
+}
+
+// HealthCheckRequest for service health check.
+message HealthCheckRequest {
+  string service = 1;
+}
+
+// HealthCheckResponse for service health check.
+message HealthCheckResponse {
+  enum ServingStatus {
+    UNKNOWN = 0;
+    SERVING = 1;
+    NOT_SERVING = 2;
+    SERVICE_UNKNOWN = 3;
+  }
+  ServingStatus status = 1;
+  map<string, string> details = 2;
+}
+
+// MailService provides RPC operations for email sending and health verification.
+service MailService {
+  // Send delivers a single email message synchronously or asynchronously.
+  rpc Send(SendMailRequest) returns (SendMailResponse);
+
+  // SendBatch delivers multiple email messages.
+  rpc SendBatch(BatchSendMailRequest) returns (BatchSendMailResponse);
+
+  // Ping checks service liveness.
+  rpc Ping(PingRequest) returns (PingResponse);
+
+  // HealthCheck checks service readiness and dependencies.
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
