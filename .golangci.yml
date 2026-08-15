@@ -1,0 +1,12 @@
+# Match the classic golangci-lint v1 default linter set; deliberate re-enabling of
+# revive/tagalign/etc. can be done later if the codebase adopts those rules.
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
