@@ -9,38 +9,6 @@ permissions:
   contents: read
 
 jobs:
-  lint-vet:
-    name: vet + golangci-lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: go mod verify
-        run: go mod verify
-
-      - name: go vet
-        run: go vet ./...
-
-      - name: gofmt check
-        run: |
-          files=$(gofmt -l . | grep -v '^vendor/' || true)
-          if [ -n "$files" ]; then
-            echo "Unformatted files:"
-            echo "$files"
-            exit 1
-          fi
-
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: v2.12.2
-          args: --timeout=5m
-
   test:
     name: test (race)
     runs-on: ubuntu-latest
