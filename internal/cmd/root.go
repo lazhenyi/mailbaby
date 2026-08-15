@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"mailbaby/internal/config"
 )
@@ -14,8 +15,52 @@ func Execute() error {
 	return ExecuteArgs(os.Args[1:])
 }
 
+// globalFlagNames are flags handled by the root command; they are accepted at
+// any position on the command line.
+func isGlobalFlag(arg string) bool {
+	switch arg {
+	case "-c", "--config", "-v", "--version", "-h", "--help", "-d", "--debug", "-e", "--env":
+		return true
+	}
+	for _, prefix := range []string{"-c=", "--config=", "-e=", "--env=", "-d=", "--debug="} {
+		if strings.HasPrefix(arg, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// splitGlobalFlags extracts global flags (and their values) from anywhere in
+// the argument list, preserving the relative order of the remaining args.
+func splitGlobalFlags(args []string) (globals []string, rest []string, err error) {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if !isGlobalFlag(arg) {
+			rest = append(rest, arg)
+			continue
+		}
+		globals = append(globals, arg)
+		if (arg == "-c" || arg == "--config" || arg == "-e" || arg == "--env") &&
+			!strings.HasPrefix(arg, "-c=") && !strings.HasPrefix(arg, "--config=") &&
+			!strings.HasPrefix(arg, "-e=") && !strings.HasPrefix(arg, "--env=") {
+			if i+1 >= len(args) {
+				return nil, nil, fmt.Errorf("flag %s requires a value", arg)
+			}
+			i++
+			globals = append(globals, args[i])
+		}
+	}
+	return globals, rest, nil
+}
+
 // ExecuteArgs parses command line arguments and dispatches to the corresponding subcommand.
 func ExecuteArgs(args []string) error {
+	// Global flags may appear before or after the subcommand
+	globals, remaining, err := splitGlobalFlags(args)
+	if err != nil {
+		return err
+	}
+
 	fs := flag.NewFlagSet("mailbaby", flag.ContinueOnError)
 
 	var configPath string
@@ -40,7 +85,7 @@ func ExecuteArgs(args []string) error {
 		printUsage()
 	}
 
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(globals); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
@@ -56,7 +101,6 @@ func ExecuteArgs(args []string) error {
 		return runVersion(nil)
 	}
 
-	remaining := fs.Args()
 	subcommand := "server"
 	subArgs := []string{}
 

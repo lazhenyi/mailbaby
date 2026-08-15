@@ -22,15 +22,17 @@ import (
 
 // App is the top-level application container coordinating the lifecycle of all subsystems.
 type App struct {
-	cfg     *config.Config
-	queue   queue.Queue
-	sender  sender.Sender
-	metrics *metrics.Metrics
-	tracer  *tracing.TracerProvider
-	engine  *runtime.Engine
-	server  *handler.Server
-	mu      sync.Mutex
-	running bool
+	cfg       *config.Config
+	queue     queue.Queue
+	sender    sender.Sender
+	metrics   *metrics.Metrics
+	tracer    *tracing.TracerProvider
+	engine    *runtime.Engine
+	server    *handler.Server
+	statsStop chan struct{}
+	statsWG   sync.WaitGroup
+	mu        sync.Mutex
+	running   bool
 }
 
 // NewApp initializes and wires all application dependencies based on the provided configuration.
@@ -81,7 +83,13 @@ func NewApp(cfg *config.Config) (*App, error) {
 	}
 
 	// 7. Initialize Unified HTTP Server (Metrics, Health, Pprof)
-	httpServer := handler.New(cfg)
+	httpServer, err := handler.New(cfg)
+	if err != nil {
+		_ = metrics.Close()
+		_ = mailSender.Close()
+		_ = q.Close()
+		return nil, fmt.Errorf("cmd: failed to initialize http server: %w", err)
+	}
 
 	// Register readiness health checkers
 	httpServer.RegisterChecker("queue", func(ctx context.Context) error {
@@ -135,7 +143,64 @@ func (a *App) Start(ctx context.Context) error {
 	}
 	logger.Get().WithField("addr", a.cfg.Server.Address()).Info("unified HTTP server listening")
 
+	// 3. Start background metrics collector (queue depth / SMTP pool stats / uptime)
+	if a.cfg.Metrics.Enabled {
+		metrics.Get().SetAppInfo(a.cfg.App.Name, a.cfg.App.Env, Version)
+		a.startMetricsCollector()
+	}
+
 	return nil
+}
+
+// startMetricsCollector periodically refreshes queue depth, SMTP pool stats and
+// app uptime gauges, gated by the collect_queue_stats / collect_smtp_stats flags.
+func (a *App) startMetricsCollector() {
+	if a.statsStop != nil {
+		return
+	}
+	a.statsStop = make(chan struct{})
+	a.statsWG.Add(1)
+
+	go func() {
+		defer a.statsWG.Done()
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+
+				if a.cfg.Metrics.CollectQueueStats && a.queue != nil {
+					if st, err := a.queue.Stats(ctx); err == nil {
+						metrics.Get().SetQueueDepth(string(st.Driver), st.Name, float64(st.Ready))
+						metrics.Get().SetQueueInFlight(string(st.Driver), st.Name, float64(st.InFlight))
+					}
+				}
+
+				if a.cfg.Metrics.CollectSmtpStats && a.sender != nil {
+					for account, st := range a.sender.Stats() {
+						metrics.Get().SetSmtpPoolStats(account, st.Pool.ActiveConns, st.Pool.IdleConns)
+					}
+				}
+
+				metrics.Get().UpdateAppUptime()
+				cancel()
+
+			case <-a.statsStop:
+				return
+			}
+		}
+	}()
+}
+
+func (a *App) stopMetricsCollector() {
+	if a.statsStop == nil {
+		return
+	}
+	close(a.statsStop)
+	a.statsWG.Wait()
+	a.statsStop = nil
 }
 
 // Shutdown stops all running services and releases all allocated connections in reverse order.
@@ -151,6 +216,9 @@ func (a *App) Shutdown(ctx context.Context) error {
 	logger.Get().Info("initiating graceful shutdown...")
 
 	var firstErr error
+
+	// 0. Stop metrics collector before tearing down dependencies
+	a.stopMetricsCollector()
 
 	// 1. Stop HTTP server (stops incoming traffic and health probes)
 	if a.server != nil {

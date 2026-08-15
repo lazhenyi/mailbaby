@@ -3,9 +3,9 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"log"
 
 	"mailbaby/internal/config"
+	"mailbaby/internal/logger"
 	"mailbaby/internal/queue"
 )
 
@@ -56,5 +56,5 @@ func printBanner(cfg *config.Config) {
 		cfg.Observability.Health.Enabled, cfg.Observability.Health.LivePath, cfg.Observability.Health.ReadyPath,
 		cfg.Observability.Pprof.Enabled, cfg.Observability.Pprof.Path)
 	fmt.Println("==================================================")
-	log.Println("[INFO] Starting MailBaby application...")
+	logger.Get().Info("starting MailBaby application...")
 }
