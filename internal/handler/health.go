@@ -69,14 +69,26 @@ func (h *HealthManager) ReadinessHandler() http.HandlerFunc {
 		components := make(map[string]string, len(checkers))
 		isHealthy := true
 
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+
 		for name, checker := range checkers {
-			if err := checker(ctx); err != nil {
-				isHealthy = false
-				components[name] = "DOWN: " + err.Error()
-			} else {
-				components[name] = "UP"
-			}
+			wg.Add(1)
+			go func(n string, chk Checker) {
+				defer wg.Done()
+				if err := chk(ctx); err != nil {
+					mu.Lock()
+					isHealthy = false
+					components[n] = "DOWN: " + err.Error()
+					mu.Unlock()
+				} else {
+					mu.Lock()
+					components[n] = "UP"
+					mu.Unlock()
+				}
+			}(name, checker)
 		}
+		wg.Wait()
 
 		w.Header().Set("Content-Type", "application/json")
 		statusStr := "UP"
