@@ -2,6 +2,8 @@ module mailbaby
 
 go 1.26.2
 
+toolchain go1.26.6
+
 require (
 	github.com/apache/pulsar-client-go v0.21.0
 	github.com/apache/rocketmq-client-go/v2 v2.1.2
