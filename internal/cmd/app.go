@@ -15,6 +15,7 @@ import (
 	"mailbaby/internal/logger"
 	"mailbaby/internal/metrics"
 	"mailbaby/internal/queue"
+	"mailbaby/internal/rpc"
 	"mailbaby/internal/runtime"
 	"mailbaby/internal/sender"
 	"mailbaby/internal/tracing"
@@ -29,6 +30,7 @@ type App struct {
 	tracer    *tracing.TracerProvider
 	engine    *runtime.Engine
 	server    *handler.Server
+	rpcServer *rpc.Server
 	statsStop chan struct{}
 	statsWG   sync.WaitGroup
 	mu        sync.Mutex
@@ -82,8 +84,14 @@ func NewApp(cfg *config.Config) (*App, error) {
 		return nil, fmt.Errorf("cmd: failed to initialize execution engine: %w", err)
 	}
 
-	// 7. Initialize Unified HTTP Server (Metrics, Health, Pprof)
-	httpServer, err := handler.New(cfg)
+	// 7. Obtain Queue Producer for HTTP/RPC async sending
+	producer, _ := q.Producer()
+
+	// 8. Initialize Unified HTTP Server (Metrics, Health, Pprof, Email REST API)
+	httpServer, err := handler.New(cfg,
+		handler.WithSender(mailSender),
+		handler.WithProducer(producer, cfg.Queue.TopicName()),
+	)
 	if err != nil {
 		_ = metrics.Close()
 		_ = mailSender.Close()
@@ -106,14 +114,27 @@ func NewApp(cfg *config.Config) (*App, error) {
 	})
 	httpServer.RegisterChecker("runtime", engine.CheckHealth)
 
+	// 9. Initialize gRPC RPC Server if enabled
+	var rpcSrv *rpc.Server
+	if cfg.GRPC.Enabled {
+		rpcSrv, err = rpc.New(cfg, mailSender, producer)
+		if err != nil {
+			_ = metrics.Close()
+			_ = mailSender.Close()
+			_ = q.Close()
+			return nil, fmt.Errorf("cmd: failed to initialize rpc server: %w", err)
+		}
+	}
+
 	return &App{
-		cfg:     cfg,
-		queue:   q,
-		sender:  mailSender,
-		metrics: m,
-		tracer:  tracer,
-		engine:  engine,
-		server:  httpServer,
+		cfg:       cfg,
+		queue:     q,
+		sender:    mailSender,
+		metrics:   m,
+		tracer:    tracer,
+		engine:    engine,
+		server:    httpServer,
+		rpcServer: rpcSrv,
 	}, nil
 }
 
@@ -143,7 +164,17 @@ func (a *App) Start(ctx context.Context) error {
 	}
 	logger.Get().WithField("addr", a.cfg.Server.Address()).Info("unified HTTP server listening")
 
-	// 3. Start background metrics collector (queue depth / SMTP pool stats / uptime)
+	// 3. Start gRPC server if configured
+	if a.rpcServer != nil {
+		if err := a.rpcServer.Start(ctx); err != nil {
+			_ = a.server.Stop(ctx)
+			_ = a.engine.Stop(ctx)
+			return fmt.Errorf("cmd: failed to start gRPC server: %w", err)
+		}
+		logger.Get().WithField("addr", a.cfg.GRPC.Address()).Info("gRPC email server listening")
+	}
+
+	// 4. Start background metrics collector (queue depth / SMTP pool stats / uptime)
 	if a.cfg.Metrics.Enabled {
 		metrics.Get().SetAppInfo(a.cfg.App.Name, a.cfg.App.Env, Version)
 		a.startMetricsCollector()
@@ -220,14 +251,21 @@ func (a *App) Shutdown(ctx context.Context) error {
 	// 0. Stop metrics collector before tearing down dependencies
 	a.stopMetricsCollector()
 
-	// 1. Stop HTTP server (stops incoming traffic and health probes)
+	// 1. Stop gRPC server
+	if a.rpcServer != nil {
+		if err := a.rpcServer.Stop(ctx); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("cmd: failed to stop gRPC server: %w", err)
+		}
+	}
+
+	// 2. Stop HTTP server (stops incoming traffic and health probes)
 	if a.server != nil {
 		if err := a.server.Stop(ctx); err != nil && firstErr == nil {
 			firstErr = fmt.Errorf("cmd: failed to stop http server: %w", err)
 		}
 	}
 
-	// 2. Stop runtime engine and drain in-flight jobs
+	// 3. Stop runtime engine and drain in-flight jobs
 	if a.engine != nil {
 		if err := a.engine.Stop(ctx); err != nil && firstErr == nil {
 			firstErr = fmt.Errorf("cmd: failed to stop engine: %w", err)
@@ -310,4 +348,9 @@ func (a *App) Sender() sender.Sender {
 // Server returns the underlying HTTP server.
 func (a *App) Server() *handler.Server {
 	return a.server
+}
+
+// RPCServer returns the underlying gRPC server (nil if not enabled).
+func (a *App) RPCServer() *rpc.Server {
+	return a.rpcServer
 }

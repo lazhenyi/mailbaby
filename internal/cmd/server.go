@@ -29,6 +29,17 @@ func printBanner(cfg *config.Config) {
 	fmt.Printf("[INFO] Environment        : %s (debug=%v)\n", cfg.App.Env, cfg.App.Debug)
 	fmt.Printf("[INFO] HTTP Server        : %s (metrics=%v, health=%v, pprof=%v)\n",
 		cfg.Server.Address(), cfg.Metrics.Enabled, cfg.Observability.Health.Enabled, cfg.Observability.Pprof.Enabled)
+	if cfg.GRPC.Enabled {
+		fmt.Printf("[INFO] gRPC Server        : %s (enabled=true, max_recv=%dMB)\n",
+			cfg.GRPC.Address(), cfg.GRPC.MaxRecvMsgSize/(1024*1024))
+	} else {
+		fmt.Printf("[INFO] gRPC Server        : disabled\n")
+	}
+	if cfg.Auth.Enabled {
+		fmt.Printf("[INFO] Authentication     : enabled (header=%s, secret_configured=true)\n", cfg.Auth.HeaderName)
+	} else {
+		fmt.Printf("[INFO] Authentication     : disabled (open access)\n")
+	}
 	fmt.Printf("[INFO] Queue Driver       : %s (concurrency=%d, retries=%d)\n",
 		cfg.Queue.Driver, cfg.Queue.Concurrency, cfg.Queue.MaxRetries)
 	fmt.Printf("[INFO] Registered Drivers : %v\n", queue.GetRegisteredDrivers())

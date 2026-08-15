@@ -55,6 +55,19 @@ func runCheck(cfg *config.Config) error {
 	// 4. Check HTTP Server Bind Address
 	fmt.Printf("[CHECK] HTTP Server endpoint (http://%s)... OK\n", cfg.Server.Address())
 
+	// 5. Check gRPC Server & Auth Settings
+	if cfg.GRPC.Enabled {
+		fmt.Printf("[CHECK] gRPC Server endpoint (grpc://%s)... OK\n", cfg.GRPC.Address())
+	} else {
+		fmt.Printf("[CHECK] gRPC Server endpoint... DISABLED\n")
+	}
+
+	if cfg.Auth.Enabled {
+		fmt.Printf("[CHECK] Authentication secret key... OK (header: %s)\n", cfg.Auth.HeaderName)
+	} else {
+		fmt.Printf("[CHECK] Authentication secret key... DISABLED (open access)\n")
+	}
+
 	fmt.Println("==================================================")
 	fmt.Println("All checks passed successfully! Configuration is valid and dependencies are reachable.")
 	return nil

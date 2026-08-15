@@ -64,9 +64,20 @@ func TestCheckCommand(t *testing.T) {
 
 func TestAppLifecycle(t *testing.T) {
 	cfg := &config.Config{
+		App: config.AppConfig{
+			Name: "mailbaby",
+			Env:  "test",
+		},
 		Server: config.ServerConfig{
 			Host: "127.0.0.1",
 			Port: 0, // dynamic
+		},
+		GRPC: config.GrpcConfig{
+			Enabled: false, // disabled in basic test
+		},
+		Auth: config.AuthConfig{
+			Enabled:   true,
+			SecretKey: "test_secret",
 		},
 		Queue: config.QueueConfig{
 			Driver:      config.DriverMemory,
