@@ -1,0 +1,42 @@
+# Git
+.git
+.gitignore
+.github
+
+# Local config and environment files (mounted at runtime)
+config.yaml
+config.local.yaml
+*.local.yaml
+.env
+.env.*
+
+# IDE & OS
+.idea
+.vscode
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Binaries and build artifacts
+bin/
+dist/
+build/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+mailbaby
+
+# Logs & temp files
+logs/
+*.log
+tmp/
+temp/
+
+# Markdown documentation and tests artifacts
+*.md
+coverage.out
+coverage.html
+profile.pprof
