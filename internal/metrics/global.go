@@ -9,6 +9,7 @@ import (
 
 var (
 	globalMetrics *Metrics
+	globalPusher  *PushGatewayPusher
 	globalMu      sync.RWMutex
 	noopMetrics   = &Metrics{}
 )
@@ -17,6 +18,11 @@ var (
 func Init(cfg config.MetricsConfig) (*Metrics, error) {
 	globalMu.Lock()
 	defer globalMu.Unlock()
+
+	if globalPusher != nil {
+		globalPusher.Stop()
+		globalPusher = nil
+	}
 
 	if !cfg.Enabled {
 		globalMetrics = noopMetrics
@@ -32,6 +38,7 @@ func Init(cfg config.MetricsConfig) (*Metrics, error) {
 	if cfg.PushGateway.Enabled && m.Registry() != nil {
 		pusher := NewPushGatewayPusher(cfg.PushGateway, m.Registry())
 		pusher.Start(context.Background())
+		globalPusher = pusher
 	}
 
 	globalMetrics = m
@@ -53,6 +60,11 @@ func Get() *Metrics {
 func Close() error {
 	globalMu.Lock()
 	defer globalMu.Unlock()
+
+	if globalPusher != nil {
+		globalPusher.Stop()
+		globalPusher = nil
+	}
 
 	if globalMetrics != nil && globalMetrics != noopMetrics {
 		err := globalMetrics.Close()
