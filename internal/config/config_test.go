@@ -784,8 +784,6 @@ func TestObservabilityValidation(t *testing.T) {
 	t.Run("health validation", func(t *testing.T) {
 		validHealth := HealthConfig{
 			Enabled:   true,
-			Host:      "0.0.0.0",
-			Port:      8080,
 			LivePath:  "/livez",
 			ReadyPath: "/readyz",
 		}
@@ -794,19 +792,8 @@ func TestObservabilityValidation(t *testing.T) {
 			t.Fatalf("expected valid health config, got %v", err)
 		}
 
-		invalidPort := HealthConfig{
-			Enabled:   true,
-			Port:      0,
-			LivePath:  "/livez",
-			ReadyPath: "/readyz",
-		}
-		if err := invalidPort.Validate(); err == nil {
-			t.Error("expected error for invalid port, got nil")
-		}
-
 		invalidLivePath := HealthConfig{
 			Enabled:   true,
-			Port:      8080,
 			LivePath:  "livez",
 			ReadyPath: "/readyz",
 		}
@@ -816,7 +803,6 @@ func TestObservabilityValidation(t *testing.T) {
 
 		invalidReadyPath := HealthConfig{
 			Enabled:   true,
-			Port:      8080,
 			LivePath:  "/livez",
 			ReadyPath: "readyz",
 		}
@@ -829,8 +815,6 @@ func TestObservabilityValidation(t *testing.T) {
 	t.Run("pprof validation", func(t *testing.T) {
 		validPprof := PprofConfig{
 			Enabled: true,
-			Host:    "127.0.0.1",
-			Port:    6060,
 			Path:    "/debug/pprof",
 		}
 		validPprof.ApplyDefaults()
@@ -838,18 +822,8 @@ func TestObservabilityValidation(t *testing.T) {
 			t.Fatalf("expected valid pprof config, got %v", err)
 		}
 
-		invalidPort := PprofConfig{
-			Enabled: true,
-			Port:    -1,
-			Path:    "/debug/pprof",
-		}
-		if err := invalidPort.Validate(); err == nil {
-			t.Error("expected error for invalid pprof port, got nil")
-		}
-
 		invalidPath := PprofConfig{
 			Enabled: true,
-			Port:    6060,
 			Path:    "debug/pprof",
 		}
 		if err := invalidPath.Validate(); err == nil {
@@ -867,11 +841,9 @@ func TestObservabilityValidation(t *testing.T) {
 			},
 			Health: HealthConfig{
 				Enabled: true,
-				Port:    8080,
 			},
 			Pprof: PprofConfig{
 				Enabled: true,
-				Port:    6060,
 			},
 		}
 		if err := obs.Validate(); err != nil {
@@ -892,6 +864,9 @@ app:
   name: "mailbaby-test-file"
   env: "production"
   debug: false
+server:
+  host: "0.0.0.0"
+  port: 8080
 queue:
   driver: "memory"
   concurrency: 8
@@ -915,8 +890,6 @@ log:
 metrics:
   enabled: true
   provider: "prometheus"
-  host: "127.0.0.1"
-  port: 9100
   path: "/metrics"
   collect_runtime: true
   collect_queue_stats: true
@@ -929,12 +902,10 @@ observability:
     sample_rate: 0.8
   health:
     enabled: true
-    port: 8081
     live_path: "/livez"
     ready_path: "/readyz"
   pprof:
     enabled: true
-    port: 6061
     path: "/debug/pprof"
 `
 	if _, err := tempFile.Write([]byte(content)); err != nil {
@@ -952,6 +923,9 @@ observability:
 	}
 	if cfg.App.Env != "production" {
 		t.Errorf("expected app.env 'production', got %q", cfg.App.Env)
+	}
+	if cfg.Server.Port != 8080 {
+		t.Errorf("expected server.port 8080, got %d", cfg.Server.Port)
 	}
 	if cfg.Queue.Concurrency != 8 {
 		t.Errorf("expected queue.concurrency 8, got %d", cfg.Queue.Concurrency)
@@ -986,8 +960,8 @@ observability:
 		t.Errorf("expected log.async true with buffer_size 2048, got %v / %d", cfg.Log.Async, cfg.Log.BufferSize)
 	}
 
-	if !cfg.Metrics.Enabled || cfg.Metrics.Port != 9100 {
-		t.Errorf("expected metrics enabled on port 9100, got %v / %d", cfg.Metrics.Enabled, cfg.Metrics.Port)
+	if !cfg.Metrics.Enabled {
+		t.Errorf("expected metrics enabled")
 	}
 
 	if !cfg.Observability.Tracing.Enabled || cfg.Observability.Tracing.Endpoint != "localhost:4317" {
@@ -996,11 +970,11 @@ observability:
 	if cfg.Observability.Tracing.SampleRate != 0.8 {
 		t.Errorf("expected sample_rate 0.8, got %f", cfg.Observability.Tracing.SampleRate)
 	}
-	if !cfg.Observability.Health.Enabled || cfg.Observability.Health.Port != 8081 {
-		t.Errorf("expected health enabled on port 8081")
+	if !cfg.Observability.Health.Enabled || cfg.Observability.Health.LivePath != "/livez" {
+		t.Errorf("expected health enabled with live_path /livez")
 	}
-	if !cfg.Observability.Pprof.Enabled || cfg.Observability.Pprof.Port != 6061 {
-		t.Errorf("expected pprof enabled on port 6061")
+	if !cfg.Observability.Pprof.Enabled || cfg.Observability.Pprof.Path != "/debug/pprof" {
+		t.Errorf("expected pprof enabled with path /debug/pprof")
 	}
 
 	global := Get()
@@ -1011,11 +985,11 @@ observability:
 
 func TestObservabilityEnvOverride(t *testing.T) {
 	t.Setenv("MAILBABY_METRICS_ENABLED", "true")
-	t.Setenv("MAILBABY_METRICS_PORT", "9200")
+	t.Setenv("MAILBABY_SERVER_PORT", "9200")
 	t.Setenv("MAILBABY_OBSERVABILITY_TRACING_ENABLED", "true")
 	t.Setenv("MAILBABY_OBSERVABILITY_TRACING_ENDPOINT", "otel-collector:4317")
 	t.Setenv("MAILBABY_OBSERVABILITY_HEALTH_ENABLED", "true")
-	t.Setenv("MAILBABY_OBSERVABILITY_HEALTH_PORT", "8090")
+	t.Setenv("MAILBABY_OBSERVABILITY_HEALTH_LIVE_PATH", "/custom-livez")
 
 	yamlContent := `
 smtp:
@@ -1029,13 +1003,17 @@ smtp:
 		t.Fatalf("expected no error, got: %v", err)
 	}
 
-	if !cfg.Metrics.Enabled || cfg.Metrics.Port != 9200 {
-		t.Errorf("expected metrics port 9200 from env, got %v / %d", cfg.Metrics.Enabled, cfg.Metrics.Port)
+	if !cfg.Metrics.Enabled {
+		t.Errorf("expected metrics enabled from env")
+	}
+	if cfg.Server.Port != 9200 {
+		t.Errorf("expected server port 9200 from env, got %d", cfg.Server.Port)
 	}
 	if !cfg.Observability.Tracing.Enabled || cfg.Observability.Tracing.Endpoint != "otel-collector:4317" {
 		t.Errorf("expected tracing endpoint 'otel-collector:4317', got %q", cfg.Observability.Tracing.Endpoint)
 	}
-	if !cfg.Observability.Health.Enabled || cfg.Observability.Health.Port != 8090 {
-		t.Errorf("expected health port 8090, got %d", cfg.Observability.Health.Port)
+	if !cfg.Observability.Health.Enabled || cfg.Observability.Health.LivePath != "/custom-livez" {
+		t.Errorf("expected health live_path '/custom-livez', got %q", cfg.Observability.Health.LivePath)
 	}
 }
+

@@ -1,134 +1,134 @@
 # ==============================================================================
-# MailBaby 配置文件示例 (config.yaml.example)
-# 基于消息队列的高性能邮件发送程序
+# MailBaby Configuration Example (config.yaml.example)
+# High-performance, message-queue-driven email sending service in Go
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
-# 1. 基础应用配置 (App)
+# 1. Base Application Configuration (App)
 # ------------------------------------------------------------------------------
 app:
-  # 应用标识名称
+  # Application service name
   name: "mailbaby"
-  # 运行环境: development | test | staging | production
+  # Environment mode: development | test | staging | production
   env: "development"
-  # 是否开启 Debug 调试模式
+  # Enable debug mode
   debug: true
-  # 优雅停机超时时间
+  # Graceful shutdown timeout
   shutdown_timeout: "10s"
 
 # ------------------------------------------------------------------------------
-# 2. 统一 HTTP 服务配置 (Server - Metrics / Health / Pprof)
+# 2. Unified HTTP Server Configuration (Server - Metrics / Health / Pprof)
 # ------------------------------------------------------------------------------
 server:
-  # 监听地址
+  # Host address to bind
   host: "0.0.0.0"
-  # 监听端口
+  # Port to listen on
   port: 8080
-  # 请求读取超时
+  # HTTP request read timeout
   read_timeout: "10s"
-  # 响应写入超时
+  # HTTP response write timeout
   write_timeout: "10s"
-  # 空闲连接超时
+  # Keep-alive idle connection timeout
   idle_timeout: "30s"
 
 # ------------------------------------------------------------------------------
-# 3. 日志系统配置 (Log)
+# 3. Logging System Configuration (Log)
 # ------------------------------------------------------------------------------
 log:
-  # 日志级别: trace | debug | info | warn | error | fatal | panic
+  # Log level: trace | debug | info | warn | error | fatal | panic
   level: "info"
-  # 日志输出格式: json | text | console | logfmt
+  # Output format: json | text | console | logfmt
   format: "text"
-  # 输出目标: stdout | stderr | file | both
+  # Output target: stdout | stderr | file | both
   output: "stdout"
-  # 当 output 为 file 或 both 时的日志存储路径
+  # Log file destination path (when output is 'file' or 'both')
   file_path: "./logs/mailbaby.log"
-  # 单个日志文件最大尺寸 (MB)
+  # Maximum size of a single log file in MB before rotation
   max_size: 100
-  # 最多保留的历史日志文件数
+  # Maximum number of rotated log backup files to retain
   max_backups: 5
-  # 历史日志最长保留天数
+  # Maximum age (in days) to retain rotated log files
   max_age: 7
-  # 是否压缩旧日志文件 (gzip)
+  # Enable gzip compression for rotated log files
   compress: true
-  # 是否打印调用者源码文件名和行号
+  # Include caller file name and line number
   show_caller: false
-  # 打印堆栈信息的最低级别: none | warn | error | panic
+  # Minimum level threshold to include stacktraces: none | warn | error | panic
   show_stacktrace: "error"
-  # 自定义时间格式 (如 2006-01-02 15:04:05 或 RFC3339)
+  # Custom timestamp layout (e.g. 2006-01-02 15:04:05 or RFC3339, empty for default)
   time_format: ""
-  # 是否开启异步日志缓冲写入 (提升极端高并发吞吐)
+  # Enable non-blocking asynchronous log writing
   async: false
-  # 异步模式下的 Channel 缓冲区大小
+  # Buffer size for async log channel
   buffer_size: 4096
 
 # ------------------------------------------------------------------------------
-# 3. SMTP 邮件发信服务器配置 (SMTP)
-# 支持声明多个 SMTP 账号，发送端可通过指定账号名选择（未指定时默认使用 default 账号）
-# 默认配置中必须存在一个 "default" 账号
+# 4. SMTP Multi-Account Configuration (SMTP)
+# Multiple SMTP accounts can be declared and selected per email message.
+# A "default" account is required.
 # ------------------------------------------------------------------------------
 smtp:
-  # 必须配置的默认发信账号 (default)
+  # Default SMTP sending account (required)
   default:
-    # SMTP 服务器地址 (如 smtp.qq.com, smtp.163.com, smtp.gmail.com, smtp.office365.com, 自建 Postfix/Haraka)
+    # SMTP server host (e.g. smtp.gmail.com, smtp.office365.com, postfix relay)
     host: "smtp.example.com"
-    # SMTP 端口: 465 (SSL/TLS), 587 (STARTTLS), 25 (标准明文/中继)
+    # SMTP server port: 465 (SSL/TLS), 587 (STARTTLS), 25 (Plain / Relay)
     port: 587
-    # 认证用户名 / 登录邮箱
+    # Authentication username or login email address
     username: "noreply@example.com"
-    # 认证密码 / 第三方客户端授权码 / API Key
+    # Authentication password, app password, or API key
     password: "your_smtp_password_or_token"
 
-    # 默认发件人邮箱地址
+    # Default envelope sender address
     from: "noreply@example.com"
-    # 发件人显示名称 (可选)
+    # Default sender display name (optional)
     from_name: "MailBaby Notification"
-    # 统一回复地址 (可选)
+    # Reply-to address (optional)
     reply_to: "support@example.com"
 
-    # 加密传输模式:
-    #   - Auto: 根据端口自动匹配 (465 走 SSL/TLS，其他走 STARTTLS)
-    #   - SSL / TLS: 强制直接建立 SSL/TLS 加密连接 (通常端口 465)
-    #   - STARTTLS: 建立明文连接后升级 TLS (通常端口 587 / 25)
-    #   - None: 明文传输，不使用加密 (仅限安全内网或测试环境)
+    # Encryption mode:
+    #   - Auto: Automatic selection (port 465 uses SSL/TLS, others use STARTTLS)
+    #   - SSL / TLS: Direct TLS connection on dial (typically port 465)
+    #   - STARTTLS: Plain connection upgraded via STARTTLS command (typically port 587 / 25)
+    #   - None: Plaintext connection without encryption (internal relay/testing only)
     encryption: "Auto"
 
-    # 是否跳过证书有效性校验 (用于自签名证书或企业内网中继环境)
+    # Skip SSL/TLS certificate verification (for self-signed internal certs)
     insecure_skip_verify: false
 
-    # HELO / EHLO 问候域名 (留空则默认使用本机 hostname)
+    # HELO / EHLO greeting domain (defaults to local hostname if empty)
     helo_hostname: ""
 
-    # 身份认证机制:
-    #   - Auto: 自动协商 (优先使用服务端支持的最高安全性机制)
-    #   - PLAIN: SASL PLAIN (大部分服务商支持)
-    #   - LOGIN: SASL LOGIN (国内很多邮箱及传统 SMTP 服务器常用)
+    # SASL Authentication Mechanism:
+    #   - Auto: Negotiate highest security supported by server
+    #   - PLAIN: SASL PLAIN
+    #   - LOGIN: SASL LOGIN
     #   - CRAM-MD5: SASL CRAM-MD5
-    #   - None: 无需身份认证 (开放中继)
+    #   - None: No authentication (open relay)
     auth_type: "Auto"
 
-    # 网络与发信超时控制
+    # Connection and delivery timeouts
     connect_timeout: "10s"
     send_timeout: "30s"
     keep_alive: "30s"
 
-    # 发信连接池管理
+    # SMTP Connection Pool Management
     pool:
-      # 最大空闲连接数
+      # Maximum number of idle connections kept open in pool
       max_idle_conns: 5
-      # 最大同时并发连接数
+      # Maximum number of concurrent active connections
       max_open_conns: 20
-      # 空闲连接最大存活时间
+      # Maximum lifetime of an idle connection before closing
       idle_timeout: "60s"
 
-    # 发信限流与风控
+    # Rate Limiting & Safety Controls
     rate_limit:
-      # 每秒最大发信速率限制 (<=0 表示不限制)
+      # Maximum sending rate in emails per second (<=0 means unlimited)
       emails_per_second: 50
-      # 单封邮件最大允许收件人数
+      # Maximum recipients allowed per single email message (0 means unlimited)
       max_recipients_per_email: 50
 
-  # 可选：声明额外的业务发信账号 (例如营销邮件账号 marketing)
+  # Optional secondary account: Marketing emails
   # marketing:
   #   host: "smtp.mailgun.org"
   #   port: 587
@@ -141,7 +141,7 @@ smtp:
   #     emails_per_second: 20
   #     max_recipients_per_email: 100
 
-  # 可选：声明告警通知账号 (例如 alert)
+  # Optional secondary account: Ops Alerts
   # alert:
   #   host: "smtp.sendgrid.net"
   #   port: 465
@@ -151,313 +151,291 @@ smtp:
   #   from_name: "Ops Alert System"
   #   encryption: "SSL"
 
-
 # ------------------------------------------------------------------------------
-# 4. 消息队列配置 (Queue)
+# 5. Message Queue Configuration (Queue)
 # ------------------------------------------------------------------------------
 queue:
-  # 当前激活的消息队列驱动类型:
-  # 支持: rabbitmq | kafka | redis | rocketmq | nats | pulsar | sqs | memory
+  # Active queue driver:
+  # Supported: memory | rabbitmq | kafka | redis | rocketmq | nats | pulsar | sqs
   driver: "memory"
 
-  # 消费者通用并发与重试控制
-  # 并发消费 Worker 协程数量
+  # Consumer worker concurrency and retry policies
+  # Number of concurrent worker goroutines
   concurrency: 10
-  # 邮件发送失败时的最大重试次数
+  # Maximum retry attempts before routing to Dead Letter Queue (DLQ)
   max_retries: 3
-  # 失败重试等待间隔
+  # Retry backoff interval
   retry_interval: "5s"
-  # QoS 预拉取消息数量
+  # QoS prefetch message count
   prefetch_count: 10
-  # 单次批量处理大小
+  # Batch processing size
   batch_size: 1
 
   # ----------------------------------------------------------------------------
-  # 4.1 RabbitMQ (AMQP 0-9-1) 驱动专属配置
+  # 5.1 RabbitMQ (AMQP 0-9-1) Driver Settings
   # ----------------------------------------------------------------------------
   rabbitmq:
-    # 完整 AMQP URL (若配置则优先使用: amqp://user:pass@host:port/vhost)
+    # Full AMQP URL (if set, overrides individual host/port fields)
     url: "amqp://guest:guest@127.0.0.1:5672/"
     host: "127.0.0.1"
     port: 5672
     username: "guest"
     password: "guest"
     vhost: "/"
-    # 消费的队列名称
+    # Queue name to consume from
     queue: "mailbaby_tasks"
-    # 绑定的交换机名称
+    # Exchange name
     exchange: "mailbaby_exchange"
-    # 路由键
+    # Routing key
     routing_key: "mail.send.#"
-    # 队列与交换机是否持久化
+    # Queue and exchange durability
     durable: true
-    # 当无消费者连接时是否自动删除队列
+    # Auto-delete queue when no consumers remain
     auto_delete: false
-    # 是否排他队列
+    # Exclusive queue access
     exclusive: false
-    # 是否自动确认消息 (生产环境建议 false，待邮件发信成功后再 Ack)
+    # Auto-acknowledge messages (false recommended for at-least-once delivery)
     auto_ack: false
-    # QoS 单通道预取消息数量
+    # Channel prefetch count
     prefetch_count: 10
-    # TLS 配置 (可选)
+    # TLS options
     tls:
       enable: false
       insecure_skip_verify: false
 
   # ----------------------------------------------------------------------------
-  # 4.2 Apache Kafka 驱动专属配置
+  # 5.2 Apache Kafka Driver Settings
   # ----------------------------------------------------------------------------
   kafka:
-    # Kafka 集群 Broker 节点地址列表
+    # Kafka broker addresses
     brokers:
       - "127.0.0.1:9092"
-    # 消费的主题 Topic
+    # Topic name
     topic: "mailbaby_tasks"
-    # 消费者组 Group ID
+    # Consumer Group ID
     group_id: "mailbaby_consumer_group"
-    # 客户端 Client ID
+    # Client ID
     client_id: "mailbaby_worker"
-    # Kafka 协议版本 (如 2.8.0, 3.4.0 等)
+    # Kafka protocol version
     version: "3.4.0"
-    # 首次接入未找到 offset 时的重置策略: oldest (最早) | newest (最新)
+    # Initial offset reset strategy: oldest | newest
     initial_offset: "newest"
-    # 是否自动提交位移
+    # Enable automatic offset commits
     auto_commit: false
-    # SASL 鉴权配置
+    # SASL Authentication
     sasl:
       enable: false
-      # 认证机制: PLAIN | SCRAM-SHA-256 | SCRAM-SHA-512 | GSSAPI
+      # Mechanism: PLAIN | SCRAM-SHA-256 | SCRAM-SHA-512 | GSSAPI
       mechanism: "PLAIN"
       user: ""
       password: ""
-    # TLS 配置
+    # TLS options
     tls:
       enable: false
       insecure_skip_verify: false
 
   # ----------------------------------------------------------------------------
-  # 4.3 Redis (Stream / List / PubSub) 驱动专属配置
+  # 5.3 Redis (Stream / List / PubSub) Driver Settings
   # ----------------------------------------------------------------------------
   redis:
-    # Redis 节点地址列表 (单机传 1 个，集群或哨兵传多个)
+    # Redis node addresses (single host or cluster/sentinel list)
     addrs:
       - "127.0.0.1:6379"
-    # 单机 host/port (简易单机配置时使用)
+    # Single node host and port
     host: "127.0.0.1"
     port: 6379
-    # Redis 6+ ACL 用户名
+    # Redis ACL username (Redis 6+)
     username: ""
-    # Redis 访问密码
+    # Redis access password
     password: ""
-    # 数据库编号
+    # Database index
     db: 0
-    # 哨兵模式 Master 名称 (若使用 Sentinel 模式)
+    # Sentinel master name (if running in Sentinel mode)
     master_name: ""
-    # 工作模式: stream (推荐, 保证 At-Least-Once 与 ACK) | list (BLPOP/BRPOP) | pubsub
+    # Operating mode: stream (recommended for ACK support) | list | pubsub
     mode: "stream"
-    # 队列 Key / Stream 名 / 频道名
+    # Redis key or Stream name
     key: "mailbaby:queue:email"
-    # Stream 消费者组名 (mode=stream 时生效)
+    # Consumer group name (for stream mode)
     group: "mailbaby_consumer_group"
-    # Stream 消费者标识名称
+    # Consumer identifier name
     consumer: "worker_node_1"
-    # 阻塞等待新消息超时时间
+    # Blocking timeout when waiting for messages
     block_time: "2s"
-    # Stream 最大长度近似淘汰限制 (0 表示不限制)
+    # Maximum stream retention length (0 means unlimited)
     max_len: 100000
 
   # ----------------------------------------------------------------------------
-  # 4.4 Apache RocketMQ 驱动专属配置
+  # 5.4 Apache RocketMQ Driver Settings
   # ----------------------------------------------------------------------------
   rocketmq:
-    # NameServer 服务节点地址列表
+    # NameServer addresses
     name_servers:
       - "127.0.0.1:9876"
-    # 消费的主题 Topic
+    # Topic name
     topic: "mailbaby_topic"
-    # 消费者组 Consumer Group
+    # Consumer Group
     group: "mailbaby_group"
-    # 访问控制凭证 AccessKey (云厂商或启用 ACL 时配置)
+    # Access credentials (for ACL or Cloud instances)
     access_key: ""
     secret_key: ""
-    # STS 临时 Token
+    # STS temporary security token
     security_token: ""
-    # 实例命名空间 / Instance ID
+    # Instance namespace
     namespace: ""
-    # 是否按照顺序消费
+    # Consume in strict FIFO order
     consume_orderly: false
 
   # ----------------------------------------------------------------------------
-  # 4.5 NATS / NATS JetStream 驱动专属配置
+  # 5.5 NATS / JetStream Driver Settings
   # ----------------------------------------------------------------------------
   nats:
-    # NATS 集群服务地址列表
+    # NATS server addresses
     servers:
       - "nats://127.0.0.1:4222"
-    # 订阅主题 Subject
+    # Subject name
     subject: "mailbaby.task.send"
-    # 负载均衡消费组 (Queue Group)
+    # Queue group for load balancing
     queue_group: "mailbaby_workers"
-    # 是否启用 JetStream 持久化消息引擎
+    # Enable JetStream persistence
     jetstream: true
-    # JetStream Stream 名称
+    # JetStream Stream name
     stream: "MAILBABY_STREAM"
-    # Durable 消费者名称
+    # Durable consumer name
     durable: "mailbaby_worker_consumer"
-    # 认证凭据 (Token / UserPass / CredsFile 选其一)
+    # Credentials (choose token, user/pass, or creds_file)
     token: ""
     username: ""
     password: ""
     creds_file: ""
 
   # ----------------------------------------------------------------------------
-  # 4.6 Apache Pulsar 驱动专属配置
+  # 5.6 Apache Pulsar Driver Settings
   # ----------------------------------------------------------------------------
   pulsar:
-    # Pulsar Broker 服务地址
+    # Pulsar broker service URL
     url: "pulsar://127.0.0.1:6650"
-    # 消费的主题 Topic (如 persistent://public/default/mailbaby_tasks)
+    # Topic name
     topic: "persistent://public/default/mailbaby_tasks"
-    # 订阅名称 Subscription Name
+    # Subscription Name
     subscription_name: "mailbaby_subscription"
-    # 订阅模式: Exclusive | Shared | Failover | Key_Shared
+    # Subscription Mode: Exclusive | Shared | Failover | Key_Shared
     subscription_type: "Shared"
-    # JWT Auth Token (可选)
+    # JWT authentication token
     auth_token: ""
 
   # ----------------------------------------------------------------------------
-  # 4.7 AWS SQS 驱动专属配置
+  # 5.7 AWS SQS Driver Settings
   # ----------------------------------------------------------------------------
   sqs:
-    # AWS Region (如 us-east-1, ap-northeast-1)
+    # AWS Region
     region: "us-east-1"
-    # SQS 队列完整 URL
+    # SQS Queue full URL
     queue_url: "https://sqs.us-east-1.amazonaws.com/123456789012/mailbaby-queue"
-    # AWS 凭据 (留空则自动从 ~/.aws/credentials 或 IAM Instance Role 读取)
+    # AWS Credentials (leave empty to use default AWS credentials chain / IAM Role)
     access_key_id: ""
     secret_access_key: ""
     session_token: ""
-    # 自定义 Endpoint (如用于 LocalStack 本地模拟: http://127.0.0.1:4566)
+    # Custom endpoint (e.g. for LocalStack testing: http://127.0.0.1:4566)
     endpoint: ""
-    # SQS 长轮询等待秒数 (0~20)
+    # SQS long polling wait duration in seconds (0~20)
     wait_time_seconds: 20
-    # 消息拉取后不可见超时秒数 (处理超时后重新可见)
+    # Visibility timeout in seconds
     visibility_timeout: 30
-    # 单次拉取最大消息数量 (1~10)
+    # Maximum batch message count per receive call (1~10)
     max_number_of_messages: 10
 
   # ----------------------------------------------------------------------------
-  # 4.8 Memory (本地 Channel 内存队列) 驱动配置
+  # 5.8 In-Memory Queue Driver Settings
   # ----------------------------------------------------------------------------
   memory:
-    # 内存 Channel 缓冲区大小
+    # Go channel buffer size
     buffer_size: 1024
 
 # ------------------------------------------------------------------------------
-# 5. 指标统计与监控监控配置 (Metrics)
+# 6. Metrics & Monitoring Configuration (Metrics)
 # ------------------------------------------------------------------------------
 metrics:
-  # 是否启用指标收集与 Exporter
+  # Enable metrics collection and exporter
   enabled: true
-  # 指标收集提供商: prometheus | statsd | otlp | expvar | none
+  # Metrics provider: prometheus | statsd | expvar | none
   provider: "prometheus"
-  # 指标暴露监听地址与端口
-  host: "0.0.0.0"
-  port: 9090
-  # HTTP 指标端点路径
+  # HTTP metrics endpoint path
   path: "/metrics"
 
-  # 是否采集 Go 运行时与 GC / 协程状态
+  # Collect Go runtime memory, GC, and goroutine statistics
   collect_runtime: true
-  # 运行时状态采样频率
-  runtime_interval: "10s"
-
-  # 是否采集队列深度、消费延迟与吞吐统计
+  # Collect queue backlog, process latency, and throughput statistics
   collect_queue_stats: true
-  # 是否采集 SMTP 连接池活跃连接、发信延迟与投递成功率统计
+  # Collect SMTP connection pool, delivery latency, and success/failure counters
   collect_smtp_stats: true
 
-  # StatsD 客户端配置 (当 provider 为 statsd 时生效)
+  # StatsD client settings (active when provider is 'statsd')
   statsd:
-    # StatsD Agent 监听地址
     address: "127.0.0.1:8125"
-    # 前缀标识
     prefix: "mailbaby."
-    # 批量刷新间隔
     flush_interval: "100ms"
 
-  # Prometheus PushGateway 推送配置 (适用于短生命周期任务或批处理作业)
+  # Prometheus PushGateway settings (for ephemeral or batch workloads)
   pushgateway:
     enabled: false
-    # PushGateway 服务地址
     url: "http://127.0.0.1:9091"
-    # 任务标识 Job Name
     job: "mailbaby_worker"
-    # 推送周期
     interval: "15s"
-    # Basic 认证凭据 (可选)
     basic_auth:
       username: ""
       password: ""
 
-  # 全局附加的静态 Label 标签 (如 env, region, cluster)
+  # Custom static labels added to all metrics (e.g. cluster, region)
   custom_labels:
     service: "mailbaby"
-    # env: "production"
 
-  # 邮件发送与排队延迟的 Histogram 分桶区间 (秒)
+  # Latency histogram buckets in seconds
   histogram_buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]
 
 # ------------------------------------------------------------------------------
-# 6. 综合可观察性配置 (Observability: 链路追踪 / 健康检查 / 性能剖析)
+# 7. Comprehensive Observability Configuration (Tracing / Health / Pprof)
 # ------------------------------------------------------------------------------
 observability:
-  # 6.1 分布式链路追踪 (Tracing)
+  # 7.1 Distributed Tracing (Tracing)
   tracing:
-    # 是否启用分布式链路追踪
+    # Enable distributed tracing
     enabled: false
-    # 链路追踪提供方: otlp | jaeger | zipkin | stdout | none
+    # Tracing provider: otlp | jaeger | zipkin | stdout | none
     provider: "otlp"
-    # 收集器接入地址 (如 OTLP gRPC 默认 4317, HTTP 4318, Jaeger 6831)
+    # Collector endpoint (e.g. OTLP gRPC 4317, OTLP HTTP 4318, Jaeger 6831)
     endpoint: "localhost:4317"
-    # 是否跳过 TLS 加密 (用于本地内网测试)
+    # Skip TLS encryption (for local/testing environments)
     insecure: true
-    # 采样率: 0.0 ~ 1.0 (1.0 表示 100% 全量采集采样)
+    # Sampling rate: 0.0 to 1.0 (1.0 = 100% trace sampling)
     sample_rate: 1.0
-    # 追踪服务标识 (留空则默认使用 app.name)
+    # Service identifier name (defaults to app.name if empty)
     service_name: "mailbaby"
-    # 批量上报触发超时
+    # Batch export timeout
     batch_timeout: "5s"
-    # 内存最大暂存 Span 队列深度
+    # Maximum span queue capacity in memory
     max_queue_size: 2048
-    # 单次导出超时
+    # Export timeout
     export_timeout: "30s"
 
-  # 6.2 容器探针健康检查 (Health Check: K8s liveness & readiness probes)
+  # 7.2 Container Health Probes (K8s /livez and /readyz)
   health:
-    # 是否启用健康检查 HTTP 服务
+    # Enable health check endpoints on the unified HTTP server
     enabled: true
-    # 监听主机与端口
-    host: "0.0.0.0"
-    port: 8080
-    # 存活探针路径 (Liveness Probe)
+    # Liveness probe endpoint path
     live_path: "/livez"
-    # 就绪探针路径 (Readiness Probe, 校验 DB/MQ/SMTP 就绪情况)
+    # Readiness probe endpoint path (verifies Queue, SMTP, and Runtime health)
     ready_path: "/readyz"
-    # 单次检查超时
+    # Timeout per readiness check execution
     check_timeout: "5s"
 
-  # 6.3 运行时性能剖析 (Pprof)
+  # 7.3 Performance Profiling (Pprof)
   pprof:
-    # 是否启用 Go pprof 性能分析服务
+    # Enable runtime pprof profiling endpoints on the unified HTTP server
     enabled: false
-    # 独立监听主机与端口 (建议限制在内网或 127.0.0.1 避免安全暴露)
-    host: "127.0.0.1"
-    port: 6060
-    # 访问根路径
+    # Profiler endpoint root path
     path: "/debug/pprof"
-    # 是否记录互斥锁锁争用剖析 (Mutex contention profiling)
+    # Enable mutex contention profiling
     profile_mutex: false
-    # 是否记录 Goroutine 阻塞剖析 (Block profiling)
+    # Enable goroutine block profiling
     profile_block: false
-

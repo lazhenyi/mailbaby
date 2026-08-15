@@ -112,11 +112,11 @@ func TestMIMEBuilding(t *testing.T) {
 
 	t.Run("multipart alternative with UTF-8 subject", func(t *testing.T) {
 		e := NewEmail().
-			SetFrom("admin@example.com", "系统管理员").
+			SetFrom("admin@example.com", "System Administrator").
 			AddTo("user@example.com").
-			SetSubject("欢迎注册 MailBaby 服务").
-			SetTextBody("欢迎使用文本").
-			SetHTMLBody("<h1>欢迎使用 HTML</h1>").
+			SetSubject("Welcome to MailBaby — Café & Services").
+			SetTextBody("Welcome to MailBaby plain text body.").
+			SetHTMLBody("<h1>Welcome to MailBaby HTML body</h1>").
 			SetHeader("X-Mailer-Tag", "reg-service")
 
 		raw, err := BuildMIME(e, "", "")
