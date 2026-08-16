@@ -13,14 +13,14 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 
 	"mailbaby/internal/config"
+	"mailbaby/internal/core"
 	"mailbaby/internal/logger"
-	"mailbaby/internal/metrics"
 	"mailbaby/internal/queue"
 	"mailbaby/internal/sender"
-	"mailbaby/internal/tracing"
 	pb "mailbaby/proto"
 )
 
@@ -30,9 +30,7 @@ type Server struct {
 	cfg        *config.Config
 	grpcServer *grpc.Server
 	listener   net.Listener
-	sender     sender.Sender
-	producer   queue.Producer
-	queueName  string
+	svc        *core.SendService
 	mu         sync.Mutex
 	running    bool
 }
@@ -56,10 +54,19 @@ func New(cfg *config.Config, s sender.Sender, p queue.Producer, extraOpts ...grp
 		grpc.MaxSendMsgSize(cfg.GRPC.MaxSendMsgSize),
 		grpc.ChainUnaryInterceptor(
 			UnaryAuthInterceptor(cfg.Auth),
+			UnaryDeadlineInterceptor(),
 		),
 		grpc.ChainStreamInterceptor(
 			StreamAuthInterceptor(cfg.Auth),
 		),
+	}
+
+	if cfg.GRPC.TLSEnabled && cfg.GRPC.TLSCertPath != "" && cfg.GRPC.TLSKeyPath != "" {
+		creds, tlsErr := credentials.NewServerTLSFromFile(cfg.GRPC.TLSCertPath, cfg.GRPC.TLSKeyPath)
+		if tlsErr != nil {
+			return nil, fmt.Errorf("rpc: failed to load TLS cert: %w", tlsErr)
+		}
+		serverOpts = append(serverOpts, grpc.Creds(creds))
 	}
 	serverOpts = append(serverOpts, extraOpts...)
 
@@ -68,9 +75,7 @@ func New(cfg *config.Config, s sender.Sender, p queue.Producer, extraOpts ...grp
 	srv := &Server{
 		cfg:        cfg,
 		grpcServer: grpcSrv,
-		sender:     s,
-		producer:   p,
-		queueName:  queueName,
+		svc:        &core.SendService{Sender: s, Producer: p, QueueName: queueName},
 	}
 
 	pb.RegisterMailServiceServer(grpcSrv, srv)
@@ -156,6 +161,14 @@ func (s *Server) GRPCServer() *grpc.Server {
 
 // Send delivers a single email message synchronously or asynchronously.
 func (s *Server) Send(ctx context.Context, req *pb.SendMailRequest) (*pb.SendMailResponse, error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Get().WithContext(ctx).WithFields(logger.Fields{
+				"panic":  fmt.Sprintf("%v", r),
+				"method": "MailService/Send",
+			}).Error("recovered panic in gRPC Send")
+		}
+	}()
 	if req == nil {
 		return nil, status.Errorf(codes.InvalidArgument, "rpc: send mail request is nil")
 	}
@@ -269,13 +282,13 @@ func (s *Server) HealthCheck(ctx context.Context, req *pb.HealthCheckRequest) (*
 	details := make(map[string]string)
 	statusVal := pb.HealthCheckResponse_SERVING
 
-	if s.sender != nil {
+	if s.svc.Sender != nil {
 		details["sender"] = "READY"
 	} else {
 		details["sender"] = "NOT_CONFIGURED"
 	}
 
-	if s.producer != nil {
+	if s.svc.Producer != nil {
 		details["queue"] = "READY"
 	} else {
 		details["queue"] = "DIRECT_MODE"
@@ -288,75 +301,38 @@ func (s *Server) HealthCheck(ctx context.Context, req *pb.HealthCheckRequest) (*
 }
 
 func (s *Server) sendSync(ctx context.Context, email *sender.Email) (*pb.SendMailResponse, error) {
-	if s.sender == nil {
+	if s.svc == nil || s.svc.Sender == nil {
 		return nil, status.Errorf(codes.Unavailable, "rpc: smtp sender is not initialized")
 	}
 
-	start := time.Now()
-	ctx, span := tracing.StartSpan(ctx, "grpc.send_email_sync")
-	defer span.End()
-
-	span.SetAttribute("email.id", email.ID)
-	span.SetAttribute("email.subject", email.Subject)
-
-	err := s.sender.Send(ctx, email)
-	account := email.Account
-	if account == "" {
-		account = "default"
-	}
-
+	out, err := s.svc.SendSync(ctx, email)
 	if err != nil {
-		span.RecordError(err)
-		metrics.Get().IncEmailsSent(account, "failed")
 		return nil, status.Errorf(codes.Internal, "rpc: delivery failed: %v", err)
 	}
 
-	metrics.Get().IncEmailsSent(account, "success")
-	metrics.Get().ObserveEmailDuration(account, time.Since(start))
-
 	return &pb.SendMailResponse{
-		Id:      email.ID,
-		Status:  "sent",
-		Message: "email sent successfully",
-		SentAt:  time.Now().UnixNano(),
+		Id:      out.ID,
+		Status:  out.Status,
+		Message: out.Message,
+		SentAt:  out.SentAt,
 	}, nil
 }
 
 func (s *Server) sendAsync(ctx context.Context, email *sender.Email) (*pb.SendMailResponse, error) {
-	data, err := email.ToJSON()
+	if s.svc == nil {
+		return nil, status.Errorf(codes.Unavailable, "rpc: send service is not initialized")
+	}
+
+	out, err := s.svc.SendAsync(ctx, email)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "rpc: failed to serialize email: %v", err)
-	}
-
-	msg := &queue.Message{
-		ID:        email.ID,
-		Payload:   data,
-		Topic:     s.queueName,
-		Timestamp: time.Now(),
-		Attempts:  1,
-	}
-
-	if s.producer != nil {
-		if err := s.producer.Publish(ctx, msg); err != nil {
-			return nil, status.Errorf(codes.Internal, "rpc: failed to publish email to queue: %v", err)
-		}
-	} else if s.sender != nil {
-		go func() {
-			bgCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-			defer cancel()
-			if sendErr := s.sender.Send(bgCtx, email); sendErr != nil {
-				logger.Get().WithError(sendErr).WithField("email_id", email.ID).Error("async background fallback delivery failed")
-			}
-		}()
-	} else {
-		return nil, status.Errorf(codes.Unavailable, "rpc: no queue producer or sender available")
+		return nil, status.Errorf(codes.Internal, "rpc: failed to enqueue email: %v", err)
 	}
 
 	return &pb.SendMailResponse{
-		Id:      email.ID,
-		Status:  "queued",
-		Message: "email enqueued successfully",
-		SentAt:  time.Now().UnixNano(),
+		Id:      out.ID,
+		Status:  out.Status,
+		Message: out.Message,
+		SentAt:  out.SentAt,
 	}, nil
 }
 
