@@ -127,6 +127,62 @@ func (e *Email) SetHeader(key, value string) *Email {
 	return e
 }
 
+// String returns a redacted string representation of the email that omits
+// the raw attachment bodies so callers can safely log it via %s/%v without
+// leaking user data into log streams.
+func (e *Email) String() string {
+	if e == nil {
+		return "<nil email>"
+	}
+	type attInfo struct {
+		Filename    string `json:"filename"`
+		ContentType string `json:"content_type,omitempty"`
+		Size        int    `json:"size"`
+		Inline      bool   `json:"inline,omitempty"`
+		ContentID   string `json:"content_id,omitempty"`
+	}
+	atts := make([]attInfo, 0, len(e.Attachments))
+	for _, a := range e.Attachments {
+		if a == nil {
+			continue
+		}
+		atts = append(atts, attInfo{
+			Filename:    a.Filename,
+			ContentType: a.ContentType,
+			Size:        len(a.Data),
+			Inline:      a.Inline,
+			ContentID:   a.ContentID,
+		})
+	}
+	payload := struct {
+		ID          string            `json:"id,omitempty"`
+		Account     string            `json:"account,omitempty"`
+		From        string            `json:"from,omitempty"`
+		ReplyTo     string            `json:"reply_to,omitempty"`
+		To          []string          `json:"to"`
+		Cc          []string          `json:"cc,omitempty"`
+		Bcc         []string          `json:"bcc,omitempty"`
+		Subject     string            `json:"subject"`
+		Tags        []string          `json:"tags,omitempty"`
+		Metadata    map[string]string `json:"metadata,omitempty"`
+		Attachments []attInfo         `json:"attachments,omitempty"`
+	}{
+		ID:          e.ID,
+		Account:     e.Account,
+		From:        e.From,
+		ReplyTo:     e.ReplyTo,
+		To:          e.To,
+		Cc:          e.Cc,
+		Bcc:         e.Bcc,
+		Subject:     e.Subject,
+		Tags:        e.Tags,
+		Metadata:    e.Metadata,
+		Attachments: atts,
+	}
+	b, _ := json.Marshal(payload)
+	return string(b)
+}
+
 // Attach attaches a file to the email.
 func (e *Email) Attach(filename string, data []byte, contentType ...string) *Email {
 	ct := detectContentType(filename, contentType...)

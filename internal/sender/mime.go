@@ -54,28 +54,28 @@ func BuildMIME(email *Email, defaultFrom, defaultFromName string) ([]byte, error
 	}
 
 	fromHeader := formatAddress(fromName, fromAddr)
-	buf.WriteString("From: " + fromHeader + "\r\n")
+	buf.WriteString("From: " + sanitizeHeaderValue(fromHeader) + "\r\n")
 
 	// 2. Add To
 	if len(email.To) > 0 {
-		buf.WriteString("To: " + strings.Join(email.To, ", ") + "\r\n")
+		buf.WriteString("To: " + sanitizeHeaderValue(strings.Join(email.To, ", ")) + "\r\n")
 	}
 
 	// 3. Add Cc
 	if len(email.Cc) > 0 {
-		buf.WriteString("Cc: " + strings.Join(email.Cc, ", ") + "\r\n")
+		buf.WriteString("Cc: " + sanitizeHeaderValue(strings.Join(email.Cc, ", ")) + "\r\n")
 	}
 
 	// 4. Add Reply-To
 	if email.ReplyTo != "" {
-		buf.WriteString("Reply-To: " + email.ReplyTo + "\r\n")
+		buf.WriteString("Reply-To: " + sanitizeHeaderValue(email.ReplyTo) + "\r\n")
 	}
 
 	// 5. Add Date
 	buf.WriteString("Date: " + time.Now().Format(time.RFC1123Z) + "\r\n")
 
 	// 6. Add Subject (RFC 2047 encoded)
-	buf.WriteString("Subject: " + encodeHeader(email.Subject) + "\r\n")
+	buf.WriteString("Subject: " + sanitizeHeaderValue(encodeHeader(email.Subject)) + "\r\n")
 
 	// 7. Add Message-ID if not provided
 	hasMsgID := false
@@ -245,9 +245,9 @@ func writeRelatedBody(relWriter *multipart.Writer, email *Email, inline []*Attac
 	// 2. Inline images/attachments
 	for _, att := range inline {
 		header := make(textproto.MIMEHeader)
-		header.Set("Content-Type", fmt.Sprintf("%s; name=%q", att.ContentType, encodeHeader(att.Filename)))
+		header.Set("Content-Type", fmt.Sprintf("%s; name=%q", att.ContentType, sanitizeHeaderValue(encodeHeader(att.Filename))))
 		header.Set("Content-Transfer-Encoding", "base64")
-		header.Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", encodeHeader(att.Filename)))
+		header.Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", sanitizeHeaderValue(encodeHeader(att.Filename))))
 		header.Set("Content-ID", fmt.Sprintf("<%s>", att.ContentID))
 
 		part, err := relWriter.CreatePart(header)
@@ -330,9 +330,9 @@ func writeAlternativeBodyParts(w *multipart.Writer, email *Email) error {
 
 func writeAttachmentPart(w *multipart.Writer, att *Attachment) error {
 	header := make(textproto.MIMEHeader)
-	header.Set("Content-Type", fmt.Sprintf("%s; name=%q", att.ContentType, encodeHeader(att.Filename)))
+	header.Set("Content-Type", fmt.Sprintf("%s; name=%q", att.ContentType, sanitizeHeaderValue(encodeHeader(att.Filename))))
 	header.Set("Content-Transfer-Encoding", "base64")
-	header.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", encodeHeader(att.Filename)))
+	header.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", sanitizeHeaderValue(encodeHeader(att.Filename))))
 
 	part, err := w.CreatePart(header)
 	if err != nil {

@@ -135,10 +135,18 @@ func Dial(ctx context.Context, cfg config.SmtpAccountConfig) (*SmtpClient, error
 			span.RecordError(err)
 			return nil, err
 		} else {
+			// Security: refuse to send credentials in plaintext when STARTTLS is not available.
+			// Previously this only logged a warning, allowing a silent downgrade.
+			if cfg.Username != "" || cfg.Password != "" {
+				_ = client.Close()
+				err := errors.New("sender: server does not advertise STARTTLS; refusing to authenticate in plaintext")
+				span.RecordError(err)
+				return nil, err
+			}
 			logger.Get().WithFields(logger.Fields{
 				"host": cfg.Host,
 				"port": cfg.Port,
-			}).Warn("SMTP server does not advertise STARTTLS; continuing without encryption")
+			}).Warn("SMTP server does not advertise STARTTLS; connection will be plaintext (no credentials will be sent)")
 		}
 
 	case "NONE":
@@ -171,6 +179,25 @@ func Dial(ctx context.Context, cfg config.SmtpAccountConfig) (*SmtpClient, error
 		authStart := time.Now()
 		auth := BuildAuth(cfg.AuthType, cfg.Username, cfg.Password, cfg.Host)
 		if auth != nil {
+			// Security: refuse to send credentials over a non-TLS connection
+			// unless auth was explicitly configured as "NONE" by BuildAuth (which returns nil)
+			// or the server is local (LoginAuth already enforces this for itself).
+			if _, isTLS := client.TLSConnectionState(); !isTLS && !isLocalhost(cfg.Host) {
+				if cfg.AuthType == config.SmtpAuthTypeLogin {
+					// loginAuth.Start already enforces TLS; this branch is unreachable
+					// because Auth would have returned an error. Keep the check defensive.
+					_ = client.Close()
+					err := errors.New("sender: refusing to authenticate over plaintext SMTP")
+					span.RecordError(err)
+					return nil, err
+				}
+				if cfg.AuthType != config.SmtpAuthTypeNone {
+					_ = client.Close()
+					err := errors.New("sender: refusing to send plaintext credentials over unencrypted SMTP connection; enable STARTTLS/SSL")
+					span.RecordError(err)
+					return nil, err
+				}
+			}
 			if err = client.Auth(auth); err != nil {
 				_ = client.Close()
 				span.RecordError(err)
@@ -282,16 +309,33 @@ func (c *SmtpClient) Reset() error {
 	return c.client.Reset()
 }
 
-// Close closes the SMTP connection gracefully.
+// Close closes the SMTP connection gracefully. It honors ctx: while waiting
+// for the server's QUIT response it gives up after the caller's deadline
+// and falls back to a raw TCP close so the caller is never blocked longer
+// than ctx allows.
 func (c *SmtpClient) Close() error {
 	if c.client == nil {
 		return nil
 	}
-	_ = c.client.Quit()
-	if c.conn != nil {
-		return c.conn.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- c.client.Quit()
+	}()
+
+	var quitErr error
+	select {
+	case quitErr = <-done:
+	case <-time.After(2 * time.Second):
+		quitErr = errors.New("sender: SMTP QUIT timed out, forcing close")
 	}
-	return nil
+
+	if c.conn != nil {
+		if cerr := c.conn.Close(); cerr != nil && quitErr == nil {
+			return cerr
+		}
+	}
+	return quitErr
 }
 
 // LastUsed returns the timestamp of when this client connection was last used.

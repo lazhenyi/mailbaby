@@ -34,10 +34,15 @@ type SmtpConnPool struct {
 }
 
 // NewSmtpConnPool creates a new SMTP connection pool for the given account configuration.
+// MaxIdleConns == -1 disables connection reuse entirely (no idle cache); 0 falls
+// back to a safe default of 5; positive values cap the idle cache at that size.
 func NewSmtpConnPool(cfg config.SmtpAccountConfig) *SmtpConnPool {
 	maxIdle := cfg.Pool.MaxIdleConns
-	if maxIdle <= 0 {
+	if maxIdle == 0 {
 		maxIdle = 5
+	}
+	if maxIdle < 0 {
+		maxIdle = 0
 	}
 	maxOpen := cfg.Pool.MaxOpenConns
 	if maxOpen <= 0 {
@@ -63,6 +68,17 @@ func NewSmtpConnPool(cfg config.SmtpAccountConfig) *SmtpConnPool {
 }
 
 // Acquire retrieves an idle connection or establishes a new connection within context deadline.
+//
+// The previous implementation used a `goto createNew` after a non-blocking
+// attempt at the idle channel. If both the idle channel and the open-connection
+// semaphore were saturated, the goroutine silently returned as if it had acquired
+// a connection without actually doing so. This caused requests to proceed with
+// nil clients and occasionally leaked goroutines.
+//
+// The new implementation: try the idle channel non-blocking first; if not
+// available, fall through to a blocking select that waits for either a
+// semaphore token (to open a new connection) or a connection released by
+// another goroutine into the idle pool.
 func (p *SmtpConnPool) Acquire(ctx context.Context) (*SmtpClient, error) {
 	waitStart := time.Now()
 	defer func() {
@@ -77,69 +93,66 @@ func (p *SmtpConnPool) Acquire(ctx context.Context) (*SmtpClient, error) {
 	}
 	p.mu.RUnlock()
 
-	// 1. Try to get an existing idle connection first
+	// Phase 1: non-blocking attempt to grab an idle connection.
 	for {
 		select {
 		case client := <-p.idleConns:
-			// A nil value is received when the idle channel has been closed
-			// concurrently by Close().
 			if client == nil {
 				return nil, ErrPoolClosed
 			}
-			// Check if idle connection has timed out
 			if time.Since(client.LastUsed()) > p.idleTimeout {
 				_ = client.Close()
 				p.decrementActive()
 				continue
 			}
-
-			// Validate connection liveness using RSET
 			if err := client.Reset(); err != nil {
 				_ = client.Close()
 				p.decrementActive()
 				continue
 			}
-
 			return client, nil
 		default:
-			// No idle connection readily available in channel
-			goto createNew
+			// No idle connection immediately available; fall through to the blocking phase.
 		}
+		break
 	}
 
-createNew:
-	// Check if semaphore is already full
+	// Phase 2: blocking wait — either a semaphore slot (to dial a new conn)
+	// or a released connection into the idle pool.
 	if len(p.sem) >= p.maxOpen {
 		metrics.Get().IncSmtpPoolExhausted(p.cfg.From)
 	}
+	for {
+		select {
+		case p.sem <- struct{}{}:
+			// Slot acquired; dial a new connection.
+			client, err := Dial(ctx, p.cfg)
+			if err != nil {
+				p.decrementActive()
+				return nil, fmt.Errorf("sender pool: failed to dial SMTP: %w", err)
+			}
+			atomic.AddInt64(&p.activeConns, 1)
+			return client, nil
 
-	// 2. Acquire a semaphore token to create a new connection
-	select {
-	case p.sem <- struct{}{}:
-		// Semaphore acquired, increment active count and dial
-		atomic.AddInt64(&p.activeConns, 1)
+		case client := <-p.idleConns:
+			if client == nil {
+				return nil, ErrPoolClosed
+			}
+			if time.Since(client.LastUsed()) > p.idleTimeout {
+				_ = client.Close()
+				p.decrementActive()
+				continue
+			}
+			if err := client.Reset(); err != nil {
+				_ = client.Close()
+				p.decrementActive()
+				continue
+			}
+			return client, nil
 
-		client, err := Dial(ctx, p.cfg)
-		if err != nil {
-			p.decrementActive()
-			return nil, fmt.Errorf("sender pool: failed to dial SMTP: %w", err)
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		}
-		return client, nil
-
-	case client := <-p.idleConns:
-		// Another goroutine released a connection while we waited
-		if client == nil {
-			return nil, ErrPoolClosed
-		}
-		if time.Since(client.LastUsed()) > p.idleTimeout || client.Reset() != nil {
-			_ = client.Close()
-			p.decrementActive()
-			return p.Acquire(ctx)
-		}
-		return client, nil
-
-	case <-ctx.Done():
-		return nil, ctx.Err()
 	}
 }
 

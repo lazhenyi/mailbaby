@@ -76,6 +76,7 @@ func newAccountSender(name string, cfg config.SmtpAccountConfig) *accountSender 
 	// the configured rate afterwards.
 	if cfg.RateLimit.EmailsPerSecond > 0 {
 		rate := cfg.RateLimit.EmailsPerSecond
+		// Cap the bucket at the configured rate to avoid unbounded memory.
 		capacity := rate
 		if capacity > 1000 {
 			capacity = 1000
@@ -89,7 +90,15 @@ func newAccountSender(name string, cfg config.SmtpAccountConfig) *accountSender 
 		}
 
 		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					logger.Get().WithField("panic", fmt.Sprintf("%v", r)).Error("rate limiter goroutine panic recovered")
+				}
+			}()
 			interval := time.Second / time.Duration(rate)
+			if interval < time.Millisecond {
+				interval = time.Millisecond
+			}
 			ticker := time.NewTicker(interval)
 			defer ticker.Stop()
 			for {

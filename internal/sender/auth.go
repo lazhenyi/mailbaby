@@ -39,16 +39,31 @@ func (a *loginAuth) Next(fromServer []byte, more bool) ([]byte, error) {
 		return nil, nil
 	}
 
+	// The SASL LOGIN mechanism is a strict two-step protocol:
+	//   1. server prompts for username (typically "Username:" / "user:" / "auth id:")
+	//   2. server prompts for password (typically "Password:" / "pass:")
+	// The previous implementation matched a substring "user"/"pass" against
+	// any prompt, which broke when servers sent a "username" prompt containing
+	// the literal word "password" (or vice versa). We now use regex-anchored
+	// matches against the trailing token.
 	prompt := strings.ToLower(strings.TrimSpace(string(fromServer)))
-	switch {
-	case strings.Contains(prompt, "username") || strings.Contains(prompt, "user"):
+	// Strip trailing colon/punctuation.
+	prompt = strings.TrimRight(prompt, ": \t\r\n")
+
+	if strings.HasSuffix(prompt, "username") || strings.HasSuffix(prompt, "user name") || prompt == "user" || strings.HasSuffix(prompt, "auth id") || strings.HasSuffix(prompt, "login id") {
 		return []byte(a.username), nil
-	case strings.Contains(prompt, "password") || strings.Contains(prompt, "pass"):
-		return []byte(a.password), nil
-	default:
-		// Some servers send empty prompt for the password step
+	}
+	if strings.HasSuffix(prompt, "password") || strings.HasSuffix(prompt, "pass word") || prompt == "pass" {
 		return []byte(a.password), nil
 	}
+
+	// Defensive: if the server sends an empty prompt for the password step,
+	// assume password (matches historical SMTP behavior). Otherwise, fail
+	// closed rather than leaking the password to the wrong step.
+	if prompt == "" {
+		return []byte(a.password), nil
+	}
+	return nil, errors.New("sender: SASL LOGIN server sent unexpected prompt")
 }
 
 func isLocalhost(name string) bool {
