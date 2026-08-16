@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"mailbaby/internal/core"
 	"mailbaby/internal/logger"
-	"mailbaby/internal/metrics"
 	"mailbaby/internal/queue"
 	"mailbaby/internal/sender"
 	"mailbaby/internal/tracing"
@@ -22,17 +22,13 @@ import (
 
 // EmailHandler handles HTTP REST endpoints for email sending.
 type EmailHandler struct {
-	sender    sender.Sender
-	producer  queue.Producer
-	queueName string
+	svc *core.SendService
 }
 
 // NewEmailHandler creates a new EmailHandler instance.
 func NewEmailHandler(s sender.Sender, p queue.Producer, queueName string) *EmailHandler {
 	return &EmailHandler{
-		sender:    s,
-		producer:  p,
-		queueName: queueName,
+		svc: &core.SendService{Sender: s, Producer: p, QueueName: queueName},
 	}
 }
 
@@ -108,6 +104,34 @@ func writeError(w http.ResponseWriter, statusCode int, errStr, details string) {
 	})
 }
 
+// writeInternalError returns a sanitized error response for the client while
+// logging the full internal error for operators. Internal SMTP/server error
+// strings (which may leak IPs, versions, or stack traces) must NOT be returned
+// to the caller.
+func writeInternalError(w http.ResponseWriter, r *http.Request, internalErr error, publicCode string) {
+	// Generate or extract a trace ID so operators can correlate.
+	traceID := getOrAssignTraceID(r)
+	logger.Get().WithContext(r.Context()).WithError(internalErr).WithFields(logger.Fields{
+		"trace_id":  traceID,
+		"path":      r.URL.Path,
+		"public":    publicCode,
+	}).Error("internal handler error (sanitized for response)")
+	writeJSON(w, http.StatusInternalServerError, ErrorResponse{
+		Code:    http.StatusInternalServerError,
+		Error:   publicCode,
+		Details: "trace_id=" + traceID,
+	})
+}
+
+func getOrAssignTraceID(r *http.Request) string {
+	if tid := r.Header.Get("X-Request-ID"); tid != "" {
+		return tid
+	}
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
 // HandleSend processes POST /v1/email/send.
 func (h *EmailHandler) HandleSend(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -137,7 +161,7 @@ func (h *EmailHandler) HandleSend(w http.ResponseWriter, r *http.Request) {
 	if isAsync {
 		resp, err := h.sendAsync(r.Context(), email)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "enqueue_failed", err.Error())
+			writeInternalError(w, r, err, "enqueue_failed")
 			return
 		}
 		writeJSON(w, http.StatusAccepted, resp)
@@ -146,7 +170,7 @@ func (h *EmailHandler) HandleSend(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.sendSync(r.Context(), email)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "delivery_failed", err.Error())
+		writeInternalError(w, r, err, "delivery_failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -224,7 +248,7 @@ func (h *EmailHandler) HandleBatchSend(w http.ResponseWriter, r *http.Request) {
 					batchResp.Results[idx] = &SendEmailResponse{
 						ID:      email.ID,
 						Status:  "failed",
-						Message: fmt.Sprintf("enqueue failed: %v", err),
+						Message: "enqueue failed",
 						SentAt:  time.Now().UnixNano(),
 					}
 				} else {
@@ -240,7 +264,7 @@ func (h *EmailHandler) HandleBatchSend(w http.ResponseWriter, r *http.Request) {
 					batchResp.Results[idx] = &SendEmailResponse{
 						ID:      email.ID,
 						Status:  "failed",
-						Message: fmt.Sprintf("delivery failed: %v", err),
+						Message: "delivery failed",
 						SentAt:  time.Now().UnixNano(),
 					}
 				} else {
@@ -257,79 +281,39 @@ func (h *EmailHandler) HandleBatchSend(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *EmailHandler) sendSync(ctx context.Context, email *sender.Email) (*SendEmailResponse, error) {
-	if h.sender == nil {
+	if h.svc == nil {
 		return nil, errors.New("smtp sender is not initialized")
 	}
-
-	start := time.Now()
 	ctx, span := tracing.StartSpan(ctx, "http.send_email_sync")
 	defer span.End()
-
 	span.SetAttribute("email.id", email.ID)
 	span.SetAttribute("email.subject", email.Subject)
 
-	err := h.sender.Send(ctx, email)
+	out, err := h.svc.SendSync(ctx, email)
 	if err != nil {
-		span.RecordError(err)
-		account := email.Account
-		if account == "" {
-			account = "default"
-		}
-		metrics.Get().IncEmailsSent(account, "failed")
 		return nil, err
 	}
-
-	account := email.Account
-	if account == "" {
-		account = "default"
-	}
-	metrics.Get().IncEmailsSent(account, "success")
-	metrics.Get().ObserveEmailDuration(account, time.Since(start))
-
 	return &SendEmailResponse{
-		ID:      email.ID,
-		Status:  "sent",
-		Message: "email sent successfully",
-		SentAt:  time.Now().UnixNano(),
+		ID:      out.ID,
+		Status:  out.Status,
+		Message: out.Message,
+		SentAt:  out.SentAt,
 	}, nil
 }
 
 func (h *EmailHandler) sendAsync(ctx context.Context, email *sender.Email) (*SendEmailResponse, error) {
-	data, err := email.ToJSON()
-	if err != nil {
-		return nil, fmt.Errorf("failed to serialize email to JSON: %w", err)
-	}
-
-	msg := &queue.Message{
-		ID:        email.ID,
-		Payload:   data,
-		Topic:     h.queueName,
-		Timestamp: time.Now(),
-		Attempts:  1,
-	}
-
-	if h.producer != nil {
-		if err := h.producer.Publish(ctx, msg); err != nil {
-			return nil, fmt.Errorf("failed to publish email to queue: %w", err)
-		}
-	} else if h.sender != nil {
-		// Asynchronous background fallback if queue producer is absent
-		go func() {
-			bgCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-			defer cancel()
-			if sendErr := h.sender.Send(bgCtx, email); sendErr != nil {
-				logger.Get().WithError(sendErr).WithField("email_id", email.ID).Error("async background fallback delivery failed")
-			}
-		}()
-	} else {
+	if h.svc == nil {
 		return nil, errors.New("neither queue producer nor sender is available")
 	}
-
+	out, err := h.svc.SendAsync(ctx, email)
+	if err != nil {
+		return nil, err
+	}
 	return &SendEmailResponse{
-		ID:      email.ID,
-		Status:  "queued",
-		Message: "email enqueued successfully",
-		SentAt:  time.Now().UnixNano(),
+		ID:      out.ID,
+		Status:  out.Status,
+		Message: out.Message,
+		SentAt:  out.SentAt,
 	}, nil
 }
 

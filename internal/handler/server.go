@@ -127,16 +127,44 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 	}
 
 	// HTTP Logging & Metrics Interceptor
+	corsOrigin := cfg.Server.CORSAllowedOrigin
+	trustProxy := cfg.Server.TrustProxyHeaders
 	interceptor := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		reqCtx, span := tracing.StartSpan(r.Context(), "http.server_request")
 		defer span.End()
 
+		clientIP := clientAddr(r, trustProxy)
 		span.SetAttribute("http.method", r.Method)
 		span.SetAttribute("http.url", r.URL.Path)
-		span.SetAttribute("http.remote_addr", r.RemoteAddr)
+		span.SetAttribute("http.remote_addr", clientIP)
+
+		if corsOrigin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", corsOrigin)
+			w.Header().Set("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key, X-Request-ID")
+			w.Header().Set("Access-Control-Max-Age", "600")
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+		}
 
 		srw := &statusResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+		defer func() {
+			if rec := recover(); rec != nil {
+				logger.Get().WithContext(reqCtx).WithFields(logger.Fields{
+					"panic":      fmt.Sprintf("%v", rec),
+					"http.path":  r.URL.Path,
+					"http.method": r.Method,
+				}).Error("recovered panic in HTTP handler")
+				if srw.statusCode == http.StatusOK {
+					srw.WriteHeader(http.StatusInternalServerError)
+					_, _ = w.Write([]byte(`{"code":500,"error":"internal_error"}`))
+				}
+			}
+		}()
 		mux.ServeHTTP(srw, r.WithContext(reqCtx))
 
 		duration := time.Since(start)
@@ -159,7 +187,7 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 			"handler":  handlerLabel,
 			"status":   srw.statusCode,
 			"duration": duration.String(),
-			"client":   r.RemoteAddr,
+			"client":   clientIP,
 		}).Debug("served HTTP request")
 	})
 
@@ -230,8 +258,14 @@ func (s *Server) Start(ctx context.Context) error {
 
 	errChan := make(chan error, 1)
 	go func() {
-		if err := s.httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errChan <- err
+		var serveErr error
+		if s.cfg.Server.TLSEnabled && s.cfg.Server.TLSCertPath != "" && s.cfg.Server.TLSKeyPath != "" {
+			serveErr = s.httpServer.ListenAndServeTLS(s.cfg.Server.TLSCertPath, s.cfg.Server.TLSKeyPath)
+		} else {
+			serveErr = s.httpServer.ListenAndServe()
+		}
+		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			errChan <- serveErr
 		}
 		close(errChan)
 	}()
@@ -246,6 +280,7 @@ func (s *Server) Start(ctx context.Context) error {
 	case <-time.After(50 * time.Millisecond):
 		logger.Get().WithFields(logger.Fields{
 			"addr":    s.httpServer.Addr,
+			"tls":     s.cfg.Server.TLSEnabled,
 			"metrics": s.cfg.Metrics.Enabled,
 			"health":  s.cfg.Observability.Health.Enabled,
 			"pprof":   s.cfg.Observability.Pprof.Enabled,
@@ -254,7 +289,9 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 }
 
-// Stop gracefully shuts down the HTTP server.
+// Stop gracefully shuts down the HTTP server. If ctx expires before all
+// in-flight requests complete, the server's underlying net.Listener is
+// closed forcefully so the caller is not blocked indefinitely.
 func (s *Server) Stop(ctx context.Context) error {
 	s.mu.Lock()
 	if !s.running {
@@ -265,7 +302,12 @@ func (s *Server) Stop(ctx context.Context) error {
 	s.mu.Unlock()
 
 	logger.Get().Info("stopping unified HTTP server...")
-	return s.httpServer.Shutdown(ctx)
+	err := s.httpServer.Shutdown(ctx)
+	if err != nil {
+		logger.Get().WithError(err).Warn("HTTP graceful shutdown timed out; forcing close")
+		_ = s.httpServer.Close()
+	}
+	return err
 }
 
 // HealthManager returns the internal health manager.
@@ -274,13 +316,19 @@ func (s *Server) HealthManager() *HealthManager {
 }
 
 // MountEmailRoutes mounts email delivery HTTP endpoints with authentication middleware.
+// Routes follow the /v1/email/* canonical path. The legacy /api/v1/* aliases are
+// deprecated and only mounted when cfg.Server.LegacyAPIV1 is true.
 func (s *Server) MountEmailRoutes() {
 	s.assertNotRunning()
 	emailH := NewEmailHandler(s.sender, s.producer, s.queueName)
 	authMW := AuthMiddleware(s.cfg.Auth)
 
 	s.mux.Handle("POST /v1/email/send", authMW(http.HandlerFunc(emailH.HandleSend)))
-	s.mux.Handle("POST /api/v1/send", authMW(http.HandlerFunc(emailH.HandleSend)))
 	s.mux.Handle("POST /v1/email/batch", authMW(http.HandlerFunc(emailH.HandleBatchSend)))
-	s.mux.Handle("POST /api/v1/batch", authMW(http.HandlerFunc(emailH.HandleBatchSend)))
+
+	// Optional legacy aliases (kept behind a flag for backward compatibility).
+	if s.cfg.Server.LegacyAPIV1 {
+		s.mux.Handle("POST /api/v1/send", authMW(http.HandlerFunc(emailH.HandleSend)))
+		s.mux.Handle("POST /api/v1/batch", authMW(http.HandlerFunc(emailH.HandleBatchSend)))
+	}
 }

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"mailbaby/internal/config"
@@ -133,6 +134,20 @@ func TestEmailHandler_SendSync(t *testing.T) {
 
 		if w.Code != http.StatusInternalServerError {
 			t.Fatalf("expected status 500, got %d", w.Code)
+		}
+		body := w.Body.String()
+		if strings.Contains(body, "smtp connection error") {
+			t.Fatalf("response body leaked the underlying SMTP error: %s", body)
+		}
+		var env ErrorResponse
+		if err := json.Unmarshal([]byte(body), &env); err != nil {
+			t.Fatalf("response body is not the public error envelope: %v body=%s", err, body)
+		}
+		if env.Error != "delivery_failed" {
+			t.Errorf("expected public error code %q, got %q", "delivery_failed", env.Error)
+		}
+		if !strings.Contains(env.Details, "trace_id=") {
+			t.Errorf("expected Details to carry a trace_id, got %q", env.Details)
 		}
 	})
 
