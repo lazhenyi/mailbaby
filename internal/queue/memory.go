@@ -135,11 +135,9 @@ func (q *MemoryQueue) Close() error {
 	q.closeOnce.Do(func() {
 		q.mu.Lock()
 		q.closed = true
-		close(q.ch)
 		drainTimeout := drainTimeoutFromConfig(q.cfg)
 		q.mu.Unlock()
 		q.drain(drainTimeout)
-		// Wait for delayed-publish goroutines to settle or exit on ctx cancel.
 		delayedDone := make(chan struct{})
 		go func() {
 			q.delayedWg.Wait()
@@ -152,6 +150,16 @@ func (q *MemoryQueue) Close() error {
 				"queue": q.name,
 			}).Warn("memory queue: delayed publishes did not finish before drain timeout")
 		}
+		// Close the channel only after every delayed-publish goroutine has
+		// either fired into it or returned without sending, so sendMessage
+		// never races with closechan under the race detector.
+		q.mu.Lock()
+		if !q.closed {
+			q.mu.Unlock()
+			return
+		}
+		close(q.ch)
+		q.mu.Unlock()
 	})
 	return nil
 }
