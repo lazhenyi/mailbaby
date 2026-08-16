@@ -245,6 +245,7 @@ type QueueConfig struct {
 	RetryInterval time.Duration `mapstructure:"retry_interval" json:"retry_interval" yaml:"retry_interval"`
 	PrefetchCount int           `mapstructure:"prefetch_count" json:"prefetch_count" yaml:"prefetch_count"`
 	BatchSize     int           `mapstructure:"batch_size" json:"batch_size" yaml:"batch_size"`
+	DrainTimeout  time.Duration `mapstructure:"drain_timeout" json:"drain_timeout" yaml:"drain_timeout"`
 
 	RabbitMQ RabbitMQConfig `mapstructure:"rabbitmq" json:"rabbitmq" yaml:"rabbitmq"`
 	Kafka    KafkaConfig    `mapstructure:"kafka" json:"kafka" yaml:"kafka"`

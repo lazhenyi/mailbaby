@@ -59,6 +59,48 @@ func TestGrpcConfig_Validate(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "tls enabled without cert path fails",
+			cfg: GrpcConfig{
+				Enabled:    true,
+				Port:       8081,
+				TLSEnabled: true,
+				TLSKeyPath: "/nonexistent/key.pem",
+			},
+			wantErr: true,
+		},
+		{
+			name: "tls enabled without key path fails",
+			cfg: GrpcConfig{
+				Enabled:     true,
+				Port:        8081,
+				TLSEnabled:  true,
+				TLSCertPath: "/nonexistent/cert.pem",
+			},
+			wantErr: true,
+		},
+		{
+			name: "tls enabled with identical cert and key paths fails",
+			cfg: GrpcConfig{
+				Enabled:     true,
+				Port:        8081,
+				TLSEnabled:  true,
+				TLSCertPath: "/same.pem",
+				TLSKeyPath:  "/same.pem",
+			},
+			wantErr: true,
+		},
+		{
+			name: "tls enabled with both paths is ok",
+			cfg: GrpcConfig{
+				Enabled:     true,
+				Port:        8081,
+				TLSEnabled:  true,
+				TLSCertPath: "/etc/ssl/cert.pem",
+				TLSKeyPath:  "/etc/ssl/key.pem",
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {

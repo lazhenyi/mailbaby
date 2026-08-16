@@ -163,6 +163,13 @@ func (a *SmtpAccountConfig) Validate(accountName ...string) error {
 		return fmt.Errorf("%s: unsupported auth_type %q", prefix, a.AuthType)
 	}
 
+	// Security: InsecureSkipVerify must not be enabled unless encryption is None
+	// (used only for local development/test environments). Allowing it for
+	// STARTTLS/SSL/TLS silently downgrades security.
+	if a.InsecureSkipVerify && !strings.EqualFold(string(a.Encryption), string(SmtpEncryptionNone)) && !strings.EqualFold(string(a.Encryption), "") {
+		return fmt.Errorf("%s: insecure_skip_verify=true is not permitted with encryption=%q; use a valid TLS cert or set encryption=None for local development", prefix, a.Encryption)
+	}
+
 	return nil
 }
 

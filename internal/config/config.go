@@ -177,7 +177,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("app.name", "mailbaby")
 	v.SetDefault("app.env", "development")
 	v.SetDefault("app.debug", false)
-	v.SetDefault("app.shutdown_timeout", 10*time.Second)
+	v.SetDefault("app.shutdown_timeout", 60*time.Second)
 
 	v.SetDefault("server.host", "0.0.0.0")
 	v.SetDefault("server.port", 8080)
@@ -192,7 +192,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("grpc.max_send_msg_size", 16*1024*1024)
 	v.SetDefault("grpc.timeout", 30*time.Second)
 
-	v.SetDefault("auth.enabled", false)
+	// Security: default auth.enabled to true (fail-closed). Operators must
+	// explicitly set MAILBABY_AUTH_ENABLED=false for an open service.
+	v.SetDefault("auth.enabled", true)
 	v.SetDefault("auth.secret_key", "")
 	v.SetDefault("auth.header_name", "X-API-Key")
 

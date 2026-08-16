@@ -13,6 +13,9 @@ type GrpcConfig struct {
 	MaxRecvMsgSize int           `mapstructure:"max_recv_msg_size" json:"max_recv_msg_size" yaml:"max_recv_msg_size"`
 	MaxSendMsgSize int           `mapstructure:"max_send_msg_size" json:"max_send_msg_size" yaml:"max_send_msg_size"`
 	Timeout        time.Duration `mapstructure:"timeout" json:"timeout" yaml:"timeout"`
+	TLSEnabled     bool          `mapstructure:"tls_enabled" json:"tls_enabled" yaml:"tls_enabled"`
+	TLSCertPath    string        `mapstructure:"tls_cert_path" json:"tls_cert_path" yaml:"tls_cert_path"`
+	TLSKeyPath     string        `mapstructure:"tls_key_path" json:"tls_key_path" yaml:"tls_key_path"`
 }
 
 // ApplyDefaults applies safe default parameters for the gRPC server.
@@ -39,6 +42,14 @@ func (c *GrpcConfig) Validate() error {
 	if c.Enabled {
 		if c.Port <= 0 || c.Port > 65535 {
 			return fmt.Errorf("grpc: invalid port %d (must be between 1 and 65535)", c.Port)
+		}
+		if c.TLSEnabled {
+			if c.TLSCertPath == "" || c.TLSKeyPath == "" {
+				return fmt.Errorf("grpc: tls_enabled requires both tls_cert_path and tls_key_path")
+			}
+			if c.TLSCertPath == c.TLSKeyPath {
+				return fmt.Errorf("grpc: tls_cert_path and tls_key_path must not be identical")
+			}
 		}
 	}
 	return nil

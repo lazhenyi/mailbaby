@@ -8,6 +8,7 @@ import (
 )
 
 func TestLoadDefaultsAndMemory(t *testing.T) {
+	t.Setenv("MAILBABY_AUTH_SECRET_KEY", "test-secret-for-defaults-test")
 	yamlContent := `
 smtp:
   default:
@@ -23,8 +24,8 @@ smtp:
 	if cfg.App.Name != "mailbaby" {
 		t.Errorf("expected App.Name 'mailbaby', got %q", cfg.App.Name)
 	}
-	if cfg.App.ShutdownTimeout != 10*time.Second {
-		t.Errorf("expected ShutdownTimeout 10s, got %v", cfg.App.ShutdownTimeout)
+	if cfg.App.ShutdownTimeout != 60*time.Second {
+		t.Errorf("expected ShutdownTimeout 60s, got %v", cfg.App.ShutdownTimeout)
 	}
 
 	if cfg.Log.Level != "info" {
@@ -63,6 +64,7 @@ smtp:
 }
 
 func TestEnvOverride(t *testing.T) {
+	t.Setenv("MAILBABY_AUTH_SECRET_KEY", "test-secret-for-env-override-test")
 	t.Setenv("MAILBABY_APP_NAME", "custom-mailbaby")
 	t.Setenv("MAILBABY_QUEUE_DRIVER", "memory")
 	t.Setenv("MAILBABY_QUEUE_CONCURRENCY", "42")
@@ -853,6 +855,7 @@ func TestObservabilityValidation(t *testing.T) {
 }
 
 func TestLoadFromFile(t *testing.T) {
+	t.Setenv("MAILBABY_AUTH_SECRET_KEY", "test-secret-for-load-from-file-test")
 	tempFile, err := os.CreateTemp("", "mailbaby-config-*.yaml")
 	if err != nil {
 		t.Fatalf("failed to create temp config: %v", err)
@@ -984,6 +987,7 @@ observability:
 }
 
 func TestObservabilityEnvOverride(t *testing.T) {
+	t.Setenv("MAILBABY_AUTH_SECRET_KEY", "test-secret-for-obs-override-test")
 	t.Setenv("MAILBABY_METRICS_ENABLED", "true")
 	t.Setenv("MAILBABY_SERVER_PORT", "9200")
 	t.Setenv("MAILBABY_OBSERVABILITY_TRACING_ENABLED", "true")
