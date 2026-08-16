@@ -71,7 +71,7 @@ func GetRegisteredDrivers() []config.QueueDriver {
 // New creates and initializes a Queue instance according to cfg.Queue.Driver.
 func New(cfg *config.Config) (Queue, error) {
 	if cfg == nil {
-		return nil, fmt.Errorf("%w: config is nil", ErrInvalidMessage)
+		return nil, fmt.Errorf("%w: config is nil", ErrInvalidConfig)
 	}
 
 	driver := config.QueueDriver(strings.ToLower(strings.TrimSpace(string(cfg.Queue.Driver))))
@@ -94,7 +94,7 @@ func New(cfg *config.Config) (Queue, error) {
 // NewQueue creates a Queue instance given only a QueueConfig.
 func NewQueue(qCfg *config.QueueConfig) (Queue, error) {
 	if qCfg == nil {
-		return nil, fmt.Errorf("%w: queue config is nil", ErrInvalidMessage)
+		return nil, fmt.Errorf("%w: queue config is nil", ErrInvalidConfig)
 	}
 	return New(&config.Config{
 		Queue: *qCfg,

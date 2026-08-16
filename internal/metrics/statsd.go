@@ -16,6 +16,7 @@ type StatsDClient struct {
 	mu       sync.Mutex
 	flushDur time.Duration
 	stopChan chan struct{}
+	doneChan chan struct{}
 	closed   bool
 }
 
@@ -35,6 +36,7 @@ func NewStatsDClient(addr, prefix string, flushInterval time.Duration) (*StatsDC
 		prefix:   prefix,
 		flushDur: flushInterval,
 		stopChan: make(chan struct{}),
+		doneChan: make(chan struct{}),
 	}
 
 	go c.flushLoop()
@@ -43,6 +45,7 @@ func NewStatsDClient(addr, prefix string, flushInterval time.Duration) (*StatsDC
 }
 
 func (c *StatsDClient) flushLoop() {
+	defer close(c.doneChan)
 	ticker := time.NewTicker(c.flushDur)
 	defer ticker.Stop()
 
@@ -103,7 +106,9 @@ func (c *StatsDClient) flushLocked() {
 	c.buf.Reset()
 }
 
-// Close flushes buffered metrics and closes the UDP connection.
+// Close flushes buffered metrics and closes the UDP connection. It blocks
+// until the background flush goroutine has finished its final flush so the
+// UDP socket is never torn down mid-write.
 func (c *StatsDClient) Close() error {
 	c.mu.Lock()
 	if c.closed {
@@ -114,5 +119,10 @@ func (c *StatsDClient) Close() error {
 	c.mu.Unlock()
 
 	close(c.stopChan)
-	return c.conn.Close()
+	<-c.doneChan
+
+	if c.conn != nil {
+		return c.conn.Close()
+	}
+	return nil
 }

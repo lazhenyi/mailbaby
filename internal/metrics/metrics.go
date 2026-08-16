@@ -370,9 +370,8 @@ func (m *Metrics) IncEmailsSent(account, status string) {
 	if m == nil || m.emailsSentTotal == nil {
 		return
 	}
-	if account == "" {
-		account = "default"
-	}
+	account = sanitizeLabel(account)
+	status = sanitizeLabel(status)
 	m.emailsSentTotal.WithLabelValues(account, status).Inc()
 
 	if m.statsd != nil {
@@ -385,9 +384,7 @@ func (m *Metrics) ObserveEmailDuration(account string, d time.Duration) {
 	if m == nil || m.emailSendDuration == nil {
 		return
 	}
-	if account == "" {
-		account = "default"
-	}
+	account = sanitizeLabel(account)
 	m.emailSendDuration.WithLabelValues(account).Observe(d.Seconds())
 
 	if m.statsd != nil {
@@ -400,9 +397,8 @@ func (m *Metrics) AddEmailRecipients(account, rcptType string, count int) {
 	if m == nil || m.emailRecipientsTotal == nil || count <= 0 {
 		return
 	}
-	if account == "" {
-		account = "default"
-	}
+	account = sanitizeLabel(account)
+	rcptType = sanitizeLabel(rcptType)
 	m.emailRecipientsTotal.WithLabelValues(account, rcptType).Add(float64(count))
 
 	if m.statsd != nil {
@@ -415,9 +411,7 @@ func (m *Metrics) AddEmailBytes(account string, bytes int64) {
 	if m == nil || m.emailPayloadBytesTotal == nil || bytes <= 0 {
 		return
 	}
-	if account == "" {
-		account = "default"
-	}
+	account = sanitizeLabel(account)
 	m.emailPayloadBytesTotal.WithLabelValues(account).Add(float64(bytes))
 
 	if m.statsd != nil {
@@ -430,9 +424,7 @@ func (m *Metrics) SetSmtpPoolStats(account string, active int64, idle int) {
 	if m == nil {
 		return
 	}
-	if account == "" {
-		account = "default"
-	}
+	account = sanitizeLabel(account)
 	if m.smtpPoolActiveConns != nil {
 		m.smtpPoolActiveConns.WithLabelValues(account).Set(float64(active))
 	}
@@ -451,9 +443,7 @@ func (m *Metrics) ObserveSmtpPoolWait(account string, d time.Duration) {
 	if m == nil || m.smtpPoolWaitDuration == nil {
 		return
 	}
-	if account == "" {
-		account = "default"
-	}
+	account = sanitizeLabel(account)
 	m.smtpPoolWaitDuration.WithLabelValues(account).Observe(d.Seconds())
 }
 
@@ -462,9 +452,7 @@ func (m *Metrics) IncSmtpPoolExhausted(account string) {
 	if m == nil || m.smtpPoolExhaustedTotal == nil {
 		return
 	}
-	if account == "" {
-		account = "default"
-	}
+	account = sanitizeLabel(account)
 	m.smtpPoolExhaustedTotal.WithLabelValues(account).Inc()
 }
 
@@ -473,9 +461,7 @@ func (m *Metrics) ObserveSmtpDial(account string, d time.Duration) {
 	if m == nil || m.smtpDialDuration == nil {
 		return
 	}
-	if account == "" {
-		account = "default"
-	}
+	account = sanitizeLabel(account)
 	m.smtpDialDuration.WithLabelValues(account).Observe(d.Seconds())
 }
 
@@ -484,9 +470,7 @@ func (m *Metrics) ObserveSmtpTLSHandshake(account string, d time.Duration) {
 	if m == nil || m.smtpTLSHandshakeDuration == nil {
 		return
 	}
-	if account == "" {
-		account = "default"
-	}
+	account = sanitizeLabel(account)
 	m.smtpTLSHandshakeDuration.WithLabelValues(account).Observe(d.Seconds())
 }
 
@@ -495,9 +479,7 @@ func (m *Metrics) ObserveSmtpAuth(account string, d time.Duration) {
 	if m == nil || m.smtpAuthDuration == nil {
 		return
 	}
-	if account == "" {
-		account = "default"
-	}
+	account = sanitizeLabel(account)
 	m.smtpAuthDuration.WithLabelValues(account).Observe(d.Seconds())
 }
 
@@ -506,6 +488,8 @@ func (m *Metrics) IncQueueReceived(driver, topic string) {
 	if m == nil || m.queueReceivedTotal == nil {
 		return
 	}
+	driver = sanitizeLabel(driver)
+	topic = sanitizeLabel(topic)
 	m.queueReceivedTotal.WithLabelValues(driver, topic).Inc()
 
 	if m.statsd != nil {
@@ -518,6 +502,9 @@ func (m *Metrics) IncQueueProcessed(driver, topic, status string) {
 	if m == nil || m.queueProcessedTotal == nil {
 		return
 	}
+	driver = sanitizeLabel(driver)
+	topic = sanitizeLabel(topic)
+	status = sanitizeLabel(status)
 	m.queueProcessedTotal.WithLabelValues(driver, topic, status).Inc()
 
 	if m.statsd != nil {
@@ -530,6 +517,8 @@ func (m *Metrics) IncQueueRetried(driver, topic string) {
 	if m == nil || m.queueRetriedTotal == nil {
 		return
 	}
+	driver = sanitizeLabel(driver)
+	topic = sanitizeLabel(topic)
 	m.queueRetriedTotal.WithLabelValues(driver, topic).Inc()
 
 	if m.statsd != nil {
@@ -542,6 +531,8 @@ func (m *Metrics) IncQueueDeadLetter(driver, topic string) {
 	if m == nil || m.queueDeadLetterTotal == nil {
 		return
 	}
+	driver = sanitizeLabel(driver)
+	topic = sanitizeLabel(topic)
 	m.queueDeadLetterTotal.WithLabelValues(driver, topic).Inc()
 }
 
@@ -550,6 +541,8 @@ func (m *Metrics) ObserveQueueProcessDuration(driver, topic string, d time.Durat
 	if m == nil || m.queueProcessDuration == nil {
 		return
 	}
+	driver = sanitizeLabel(driver)
+	topic = sanitizeLabel(topic)
 	m.queueProcessDuration.WithLabelValues(driver, topic).Observe(d.Seconds())
 
 	if m.statsd != nil {
@@ -562,6 +555,9 @@ func (m *Metrics) ObserveQueuePublish(driver, topic, status string, d time.Durat
 	if m == nil {
 		return
 	}
+	driver = sanitizeLabel(driver)
+	topic = sanitizeLabel(topic)
+	status = sanitizeLabel(status)
 	if m.queuePublishTotal != nil {
 		m.queuePublishTotal.WithLabelValues(driver, topic, status).Inc()
 	}
@@ -575,6 +571,8 @@ func (m *Metrics) ObserveQueueLag(driver, topic string, d time.Duration) {
 	if m == nil || m.queueLagDuration == nil || d <= 0 {
 		return
 	}
+	driver = sanitizeLabel(driver)
+	topic = sanitizeLabel(topic)
 	m.queueLagDuration.WithLabelValues(driver, topic).Observe(d.Seconds())
 }
 
@@ -583,6 +581,8 @@ func (m *Metrics) SetQueueDepth(driver, topic string, depth float64) {
 	if m == nil || m.queueDepth == nil {
 		return
 	}
+	driver = sanitizeLabel(driver)
+	topic = sanitizeLabel(topic)
 	m.queueDepth.WithLabelValues(driver, topic).Set(depth)
 
 	if m.statsd != nil {
@@ -595,6 +595,8 @@ func (m *Metrics) SetQueueInFlight(driver, topic string, inFlight float64) {
 	if m == nil || m.queueInFlight == nil {
 		return
 	}
+	driver = sanitizeLabel(driver)
+	topic = sanitizeLabel(topic)
 	m.queueInFlight.WithLabelValues(driver, topic).Set(inFlight)
 
 	if m.statsd != nil {
@@ -607,6 +609,8 @@ func (m *Metrics) ObserveHTTPRequest(handler, method string, code int, d time.Du
 	if m == nil {
 		return
 	}
+	handler = sanitizeLabel(handler)
+	method = sanitizeLabel(method)
 	codeStr := strconv.Itoa(code)
 	if m.httpRequestsTotal != nil {
 		m.httpRequestsTotal.WithLabelValues(handler, method, codeStr).Inc()

@@ -54,14 +54,28 @@ var (
 )
 
 // Init initializes the global TracerProvider based on TracingConfig.
-// Note: the current implementation exports finished spans to stdout only.
-// The tracing.provider / tracing.endpoint configuration keys are reserved for
-// future OTLP/gRPC exporters and are not yet consumed.
+// The provider field selects the span exporter: stdout uses the internal
+// StdoutSpanExporter, none installs a no-op provider, and otlp/jaeger/zipkin
+// are reserved for future exporters (currently downgraded to stdout with a
+// warning so misconfigured deployments still surface spans locally).
 func Init(cfg config.TracingConfig) (*TracerProvider, error) {
 	cfg.ApplyDefaults()
 
+	if !cfg.Enabled {
+		return setGlobal(&TracerProvider{cfg: cfg, exporter: noopExporter{}}), nil
+	}
+
 	var exporter SpanExporter
-	if cfg.Enabled {
+	switch strings.ToLower(strings.TrimSpace(string(cfg.Provider))) {
+	case string(config.TracingProviderNone), "noop":
+		exporter = noopExporter{}
+	case string(config.TracingProviderStdout), "":
+		exporter = &StdoutSpanExporter{}
+	default:
+		logger.Get().WithFields(logger.Fields{
+			"provider": cfg.Provider,
+			"endpoint": cfg.Endpoint,
+		}).Warn("tracing: provider not implemented, falling back to stdout exporter")
 		exporter = &StdoutSpanExporter{}
 	}
 
@@ -70,12 +84,23 @@ func Init(cfg config.TracingConfig) (*TracerProvider, error) {
 		exporter: exporter,
 	}
 
+	setGlobal(tp)
+	return tp, nil
+}
+
+func setGlobal(tp *TracerProvider) *TracerProvider {
 	globalMu.Lock()
 	globalTracer = tp
 	globalMu.Unlock()
-
-	return tp, nil
+	return tp
 }
+
+// noopExporter silently discards spans; useful when tracing is disabled or
+// the operator explicitly opts out via tracing.provider=none.
+type noopExporter struct{}
+
+func (noopExporter) ExportSpan(_ *Span) {}
+func (noopExporter) Close() error      { return nil }
 
 // Get returns the global TracerProvider.
 func Get() *TracerProvider {
@@ -85,6 +110,18 @@ func Get() *TracerProvider {
 		return defaultTracer
 	}
 	return globalTracer
+}
+
+// Set swaps the global TracerProvider. Intended for tests; production code
+// should call Init instead. Pass nil to restore the default no-op provider.
+func Set(tp *TracerProvider) {
+	globalMu.Lock()
+	defer globalMu.Unlock()
+	if tp == nil {
+		globalTracer = defaultTracer
+		return
+	}
+	globalTracer = tp
 }
 
 // StartSpan creates and begins a new Span as a child of the span in ctx if present.

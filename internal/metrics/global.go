@@ -56,6 +56,19 @@ func Get() *Metrics {
 	return globalMetrics
 }
 
+// Set swaps the global Metrics collector. Intended for tests that need to
+// inject a custom registry; production code should call Init instead. The
+// caller must Close the previous instance if it owns it.
+func Set(m *Metrics) {
+	globalMu.Lock()
+	defer globalMu.Unlock()
+	if m == nil {
+		globalMetrics = noopMetrics
+		return
+	}
+	globalMetrics = m
+}
+
 // Close closes all metric network clients.
 func Close() error {
 	globalMu.Lock()

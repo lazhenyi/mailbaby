@@ -29,4 +29,7 @@ var (
 
 	// ErrNilHandler is returned when a nil handler is passed to Consume.
 	ErrNilHandler = errors.New("queue: message handler cannot be nil")
+
+	// ErrInvalidConfig is returned when a driver is constructed without a valid *config.Config.
+	ErrInvalidConfig = errors.New("queue: config is required and must be non-nil")
 )

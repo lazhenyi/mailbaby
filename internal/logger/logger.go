@@ -181,6 +181,25 @@ func Get() *Logger {
 	return globalLogger
 }
 
+// Set swaps the global Logger. Intended for tests; production code should
+// call Init instead. Passing nil restores a default no-op logger so callers
+// never observe a nil dereference.
+func Set(l *Logger) {
+	globalMu.Lock()
+	defer globalMu.Unlock()
+	if l == nil {
+		globalLogger = newNoopLogger()
+		return
+	}
+	globalLogger = l
+}
+
+// newNoopLogger returns a Logger that swallows every entry. It is used as a
+// safe default when Set(nil) is invoked.
+func newNoopLogger() *Logger {
+	return &Logger{}
+}
+
 // Sync flushes all pending buffered logs.
 func Sync() error {
 	globalMu.RLock()
@@ -321,19 +340,26 @@ func (e *Entry) log(lvl Level, msg string) {
 			payload["caller"] = callerStr
 		}
 		for k, v := range e.fields {
-			payload[k] = v
+			switch val := v.(type) {
+			case string:
+				payload[k] = RedactSecrets(val)
+			case error:
+				payload[k] = RedactSecrets(val.Error())
+			default:
+				payload[k] = v
+			}
 		}
 		data, _ := json.Marshal(payload)
 		buf.Write(data)
 		buf.WriteByte('\n')
 
 	case string(config.LogFormatLogfmt):
-		fmt.Fprintf(&buf, "time=%q level=%s msg=%q", timeStr, lvl.String(), escapeLogText(msg))
+		fmt.Fprintf(&buf, "time=%q level=%s msg=%q", timeStr, lvl.String(), escapeLogText(RedactSecrets(msg)))
 		if callerStr != "" {
 			fmt.Fprintf(&buf, " caller=%q", callerStr)
 		}
 		for k, v := range e.fields {
-			fmt.Fprintf(&buf, " %s=%q", k, escapeLogText(fmt.Sprint(v)))
+			fmt.Fprintf(&buf, " %s=%q", k, escapeLogText(RedactSecrets(fmt.Sprint(v))))
 		}
 		buf.WriteByte('\n')
 
@@ -345,13 +371,13 @@ func (e *Entry) log(lvl Level, msg string) {
 		if tid, ok := e.fields["trace_id"]; ok {
 			fmt.Fprintf(&buf, " [trace_id=%v]", escapeLogText(fmt.Sprint(tid)))
 		}
-		fmt.Fprintf(&buf, " %s", escapeLogText(msg))
+		fmt.Fprintf(&buf, " %s", escapeLogText(RedactSecrets(msg)))
 
 		// Append extra fields
 		var extra []string
 		for k, v := range e.fields {
 			if k != "trace_id" && k != "span_id" {
-				extra = append(extra, fmt.Sprintf("%s=%v", k, escapeLogText(fmt.Sprint(v))))
+				extra = append(extra, fmt.Sprintf("%s=%v", k, escapeLogText(RedactSecrets(fmt.Sprint(v)))))
 			}
 		}
 		if len(extra) > 0 {
