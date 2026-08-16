@@ -130,6 +130,14 @@ func (e *Engine) Start(ctx context.Context) error {
 		defer func() {
 			atomic.StoreInt32(&e.state, int32(StateStopped))
 		}()
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Get().WithFields(logger.Fields{
+					"panic": fmt.Sprintf("%v", r),
+					"stage": "engine.consumer_loop",
+				}).Error("recovered panic in engine consumer loop")
+			}
+		}()
 
 		consumeOpts := []queue.ConsumeOption{queue.WithConcurrency(e.concurrency)}
 		if e.cfg != nil && e.cfg.Queue.BatchSize > 0 {
@@ -151,26 +159,36 @@ func (e *Engine) Start(ctx context.Context) error {
 
 // Stop gracefully shuts down the engine, waiting for in-flight messages to complete within timeout.
 func (e *Engine) Stop(ctx context.Context) error {
-	if !atomic.CompareAndSwapInt32(&e.state, int32(StateRunning), int32(StateStopping)) {
-		// If already stopped or stopping, return without error
-		return nil
+	for {
+		current := atomic.LoadInt32(&e.state)
+		if current == int32(StateStopped) {
+			return nil
+		}
+		if atomic.CompareAndSwapInt32(&e.state, current, int32(StateStopping)) {
+			break
+		}
 	}
 
 	logger.Get().Info("stopping execution engine, waiting for in-flight tasks to finish")
 
-	// 1. Cancel consumer context to stop accepting new messages
 	if e.cancelFunc != nil {
 		e.cancelFunc()
 	}
 
-	// 2. Close consumer
 	if e.consumer != nil {
 		_ = e.consumer.Close()
 	}
 
-	// 3. Wait for background consumer loop and in-flight tasks to drain
 	done := make(chan struct{})
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Get().WithFields(logger.Fields{
+					"panic": fmt.Sprintf("%v", r),
+					"stage": "engine.shutdown_wait",
+				}).Error("recovered panic in engine shutdown wait")
+			}
+		}()
 		e.wg.Wait()
 		close(done)
 	}()
@@ -180,6 +198,7 @@ func (e *Engine) Stop(ctx context.Context) error {
 		logger.Get().Info("runtime: all in-flight tasks drained successfully. Engine stopped.")
 	case <-ctx.Done():
 		logger.Get().WithError(ctx.Err()).Warn("graceful shutdown timed out")
+		atomic.StoreInt32(&e.state, int32(StateStopped))
 		return ctx.Err()
 	}
 

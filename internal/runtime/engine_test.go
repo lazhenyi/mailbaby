@@ -84,11 +84,19 @@ func (m *mockSender) getSentCount() int {
 type mockProducer struct {
 	mu            sync.Mutex
 	publishedMsgs []*queue.Message
+	failOnce      atomic.Bool
+	failErr       error
 }
 
 func (p *mockProducer) Publish(ctx context.Context, msg *queue.Message, opts ...queue.PublishOption) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.failOnce.Swap(false) {
+		if p.failErr == nil {
+			return errors.New("mock dlq failure")
+		}
+		return p.failErr
+	}
 	p.publishedMsgs = append(p.publishedMsgs, msg)
 	return nil
 }
@@ -96,12 +104,24 @@ func (p *mockProducer) Publish(ctx context.Context, msg *queue.Message, opts ...
 func (p *mockProducer) PublishBatch(ctx context.Context, msgs []*queue.Message, opts ...queue.PublishOption) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.failOnce.Swap(false) {
+		if p.failErr == nil {
+			return errors.New("mock dlq failure")
+		}
+		return p.failErr
+	}
 	p.publishedMsgs = append(p.publishedMsgs, msgs...)
 	return nil
 }
 
 func (p *mockProducer) Close() error {
 	return nil
+}
+
+func (p *mockProducer) publishedCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.publishedMsgs)
 }
 
 func TestEngineSuccessFlow(t *testing.T) {
@@ -458,6 +478,50 @@ func TestEngineConcurrencyAndShutdown(t *testing.T) {
 	}
 }
 
+func TestEngineStopTimeout(t *testing.T) {
+	cfg := &config.Config{
+		Queue: config.QueueConfig{
+			Driver:      config.DriverMemory,
+			Concurrency: 1,
+			MaxRetries:  1,
+		},
+	}
+
+	q, _ := queue.New(cfg)
+	defer func() { _ = q.Close() }()
+
+	mockSend := newMockSender()
+	mockSend.delaySending = 500 * time.Millisecond
+
+	engine, _ := New(q, mockSend, cfg, WithConcurrency(1))
+	producer, _ := q.Producer()
+	email := sender.NewEmail().AddTo("user@example.com").SetSubject("Slow")
+	payload, _ := email.ToJSON()
+	_ = producer.Publish(context.Background(), &queue.Message{
+		ID:        "slow-msg",
+		Payload:   payload,
+		Topic:     "test_slow",
+		Timestamp: time.Now(),
+	})
+
+	if err := engine.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Give consumer a moment to pick up the message
+	time.Sleep(100 * time.Millisecond)
+
+	stopCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	err := engine.Stop(stopCtx)
+	if err == nil {
+		t.Fatal("expected shutdown timeout error, got nil")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected DeadlineExceeded, got %v", err)
+	}
+}
+
 func TestEngineTransientFailureRetriesThenSucceeds(t *testing.T) {
 	cfg := &config.Config{
 		Queue: config.QueueConfig{
@@ -598,5 +662,61 @@ func TestEngineRetryExhaustedPublishesDLQOnceAndAcks(t *testing.T) {
 	}
 	if mockSend.getSentCount() != 0 {
 		t.Errorf("expected 0 successful sends, got %d", mockSend.getSentCount())
+	}
+}
+
+func TestEngineDLQPublishFailureDoesNotAck(t *testing.T) {
+	cfg := &config.Config{
+		Queue: config.QueueConfig{
+			Driver:        config.DriverMemory,
+			Concurrency:   1,
+			MaxRetries:    1,
+			RetryInterval: 5 * time.Millisecond,
+		},
+	}
+
+	q, err := queue.New(cfg)
+	if err != nil {
+		t.Fatalf("failed to create memory queue: %v", err)
+	}
+	defer func() { _ = q.Close() }()
+
+	mockSend := newMockSender()
+	mockSend.alwaysFail = true
+
+	dlqProd := &mockProducer{}
+	dlqProd.failOnce.Store(true)
+
+	engine, err := New(q, mockSend, cfg, WithDLQ(dlqProd, "test_dlq"))
+	if err != nil {
+		t.Fatalf("failed to create engine: %v", err)
+	}
+
+	payload, _ := sender.NewEmail().
+		SetFrom("test@example.com").
+		AddTo("t@example.com").
+		SetSubject("DLQ fail").
+		ToJSON()
+
+	producer, _ := q.Producer()
+	_ = producer.Publish(context.Background(), &queue.Message{
+		ID:        "dlq-fail-msg",
+		Payload:   payload,
+		Topic:     "test_retry",
+		Timestamp: time.Now(),
+	})
+
+	_ = engine.Start(context.Background())
+	defer func() { _ = engine.Stop(context.Background()) }()
+
+	for i := 0; i < 50; i++ {
+		if dlqProd.publishedCount() >= 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	if dlqProd.publishedCount() != 0 {
+		t.Errorf("DLQ publish should have failed and not persisted; got %d", dlqProd.publishedCount())
 	}
 }
