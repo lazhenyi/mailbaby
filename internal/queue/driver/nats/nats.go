@@ -8,11 +8,11 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"mailbaby/internal/config"
 	"mailbaby/internal/queue"
+	"mailbaby/internal/queue/driver/common"
 
 	nats "github.com/nats-io/nats.go"
 )
@@ -23,21 +23,19 @@ func init() {
 
 // NATSQueue implements queue.Queue for NATS & NATS JetStream.
 type NATSQueue struct {
-	cfg        *config.Config
-	nCfg       config.NATSConfig
-	nc         *nats.Conn
-	js         nats.JetStreamContext
-	closed     bool
-	mu         sync.RWMutex
-	inFlight   int64
-	totalSent  int64
-	activeCons int64
+	cfg    *config.Config
+	nCfg   config.NATSConfig
+	nc     *nats.Conn
+	js     nats.JetStreamContext
+	closed bool
+	mu     sync.RWMutex
+	common.BaseStats
 }
 
 // New creates and initializes a new NATS Queue instance.
 func New(cfg *config.Config) (queue.Queue, error) {
 	if cfg == nil {
-		return nil, fmt.Errorf("%w: config is nil", queue.ErrInvalidMessage)
+		return nil, fmt.Errorf("%w: config is nil", queue.ErrInvalidConfig)
 	}
 
 	nCfg := cfg.Queue.NATS
@@ -141,12 +139,13 @@ func (q *NATSQueue) Stats(ctx context.Context) (queue.Stats, error) {
 	}
 
 	nStats := q.nc.Stats()
+	_, totalSent, consumers := q.Snapshot()
 	return queue.Stats{
 		Driver:    config.DriverNATS,
 		Name:      q.nCfg.Subject,
-		InFlight:  atomic.LoadInt64(&q.inFlight),
-		Total:     atomic.LoadInt64(&q.totalSent),
-		Consumers: int(atomic.LoadInt64(&q.activeCons)),
+		InFlight:  q.InFlight,
+		Total:     totalSent,
+		Consumers: consumers,
 		Extra: map[string]any{
 			"jetstream":  q.nCfg.JetStream,
 			"in_msgs":    nStats.InMsgs,
@@ -218,7 +217,7 @@ func (p *natsProducer) Publish(ctx context.Context, msg *queue.Message, opts ...
 		return fmt.Errorf("%w: %v", queue.ErrPublishFailed, err)
 	}
 
-	atomic.AddInt64(&p.q.totalSent, 1)
+	p.q.IncTotalSent(1)
 	return nil
 }
 
@@ -264,8 +263,8 @@ func (c *natsConsumer) Consume(ctx context.Context, handler queue.Handler, opts 
 		finalHandler = queue.Chain(co.Middlewares...)(handler)
 	}
 
-	atomic.AddInt64(&c.q.activeCons, 1)
-	defer atomic.AddInt64(&c.q.activeCons, -1)
+	c.q.IncActiveCons(1)
+	defer c.q.DecActiveCons(1)
 
 	msgChan := make(chan *nats.Msg, 1024)
 
@@ -297,6 +296,7 @@ func (c *natsConsumer) Consume(ctx context.Context, handler queue.Handler, opts 
 	}
 
 	var wg sync.WaitGroup
+	backoff := common.NewBackoff(50*time.Millisecond, 5*time.Second)
 	// Worker pool
 	for i := 0; i < concurrency; i++ {
 		wg.Add(1)
@@ -331,7 +331,9 @@ func (c *natsConsumer) Consume(ctx context.Context, handler queue.Handler, opts 
 				if ctx.Err() != nil {
 					return
 				}
-				time.Sleep(50 * time.Millisecond)
+				if !backoff.Wait(ctx) {
+					return
+				}
 				continue
 			}
 
@@ -348,8 +350,8 @@ func (c *natsConsumer) Consume(ctx context.Context, handler queue.Handler, opts 
 }
 
 func (c *natsConsumer) processMsg(ctx context.Context, nMsg *nats.Msg, handler queue.Handler, co queue.ConsumeOptions) {
-	atomic.AddInt64(&c.q.inFlight, 1)
-	defer atomic.AddInt64(&c.q.inFlight, -1)
+	c.q.IncInFlight()
+	defer c.q.DecInFlight()
 
 	headers := make(map[string]string)
 	var msgID string

@@ -4,15 +4,16 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"mailbaby/internal/config"
 	"mailbaby/internal/queue"
+	"mailbaby/internal/queue/driver/common"
 
 	kafka "github.com/segmentio/kafka-go"
 	"github.com/segmentio/kafka-go/sasl"
@@ -33,15 +34,13 @@ type KafkaQueue struct {
 	transport  *kafka.Transport
 	closed     bool
 	mu         sync.RWMutex
-	inFlight   int64
-	totalSent  int64
-	activeCons int64
+	common.BaseStats
 }
 
 // New creates and initializes a Kafka Queue instance.
 func New(cfg *config.Config) (queue.Queue, error) {
 	if cfg == nil {
-		return nil, fmt.Errorf("%w: config is nil", queue.ErrInvalidMessage)
+		return nil, fmt.Errorf("%w: config is nil", queue.ErrInvalidConfig)
 	}
 
 	kCfg := cfg.Queue.Kafka
@@ -184,13 +183,14 @@ func (q *KafkaQueue) Stats(ctx context.Context) (queue.Stats, error) {
 	}
 
 	wStats := q.writer.Stats()
+	inFlight, totalSent, consumers := q.Snapshot()
 	return queue.Stats{
 		Driver:    config.DriverKafka,
 		Name:      q.kCfg.Topic,
 		Ready:     0,
-		InFlight:  atomic.LoadInt64(&q.inFlight),
-		Total:     atomic.LoadInt64(&q.totalSent),
-		Consumers: int(atomic.LoadInt64(&q.activeCons)),
+		InFlight:  inFlight,
+		Total:     totalSent,
+		Consumers: consumers,
 		Extra: map[string]any{
 			"group_id":        q.kCfg.GroupID,
 			"writer_writes":   wStats.Writes,
@@ -263,7 +263,7 @@ func (p *kafkaProducer) Publish(ctx context.Context, msg *queue.Message, opts ..
 		return fmt.Errorf("%w: %v", queue.ErrPublishFailed, err)
 	}
 
-	atomic.AddInt64(&p.q.totalSent, 1)
+	p.q.IncTotalSent(1)
 	return nil
 }
 
@@ -306,7 +306,7 @@ func (p *kafkaProducer) PublishBatch(ctx context.Context, msgs []*queue.Message,
 		return fmt.Errorf("%w: %v", queue.ErrPublishFailed, err)
 	}
 
-	atomic.AddInt64(&p.q.totalSent, int64(len(kMsgs)))
+	p.q.IncTotalSent(int64(len(kMsgs)))
 	return nil
 }
 
@@ -352,8 +352,10 @@ func (c *kafkaConsumer) Consume(ctx context.Context, handler queue.Handler, opts
 		finalHandler = queue.Chain(co.Middlewares...)(handler)
 	}
 
-	atomic.AddInt64(&c.q.activeCons, int64(concurrency))
-	defer atomic.AddInt64(&c.q.activeCons, -int64(concurrency))
+	c.q.IncActiveCons(concurrency)
+	defer c.q.DecActiveCons(concurrency)
+
+	backoff := common.NewBackoff(100*time.Millisecond, 5*time.Second)
 
 	var wg sync.WaitGroup
 	for i := 0; i < concurrency; i++ {
@@ -389,7 +391,9 @@ func (c *kafkaConsumer) Consume(ctx context.Context, handler queue.Handler, opts
 					if ctx.Err() != nil {
 						return
 					}
-					time.Sleep(100 * time.Millisecond)
+					if !backoff.Wait(ctx) {
+						return
+					}
 					continue
 				}
 
@@ -403,8 +407,8 @@ func (c *kafkaConsumer) Consume(ctx context.Context, handler queue.Handler, opts
 }
 
 func (c *kafkaConsumer) processMessage(ctx context.Context, r *kafka.Reader, kMsg kafka.Message, handler queue.Handler, co queue.ConsumeOptions) {
-	atomic.AddInt64(&c.q.inFlight, 1)
-	defer atomic.AddInt64(&c.q.inFlight, -1)
+	c.q.IncInFlight()
+	defer c.q.DecInFlight()
 
 	headers := make(map[string]string, len(kMsg.Headers))
 	var msgID string
@@ -532,6 +536,5 @@ func buildTLSConfig(cfg config.TLSConfig) (*tls.Config, error) {
 }
 
 func errorsIsContext(err error) bool {
-	return strings.Contains(err.Error(), "context deadline exceeded") ||
-		strings.Contains(err.Error(), "context canceled")
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
 }

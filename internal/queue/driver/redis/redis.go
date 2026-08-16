@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"mailbaby/internal/config"
 	"mailbaby/internal/queue"
+	"mailbaby/internal/queue/driver/common"
 
 	redis "github.com/redis/go-redis/v9"
 )
@@ -22,21 +22,19 @@ func init() {
 
 // RedisQueue implements queue.Queue for Redis (Stream, List, PubSub).
 type RedisQueue struct {
-	cfg        *config.Config
-	rCfg       config.RedisConfig
-	client     redis.UniversalClient
-	mode       string
-	closed     bool
-	mu         sync.RWMutex
-	inFlight   int64
-	totalSent  int64
-	activeCons int64
+	cfg    *config.Config
+	rCfg   config.RedisConfig
+	client redis.UniversalClient
+	mode   string
+	closed bool
+	mu     sync.RWMutex
+	common.BaseStats
 }
 
 // New creates and initializes a new Redis Queue instance.
 func New(cfg *config.Config) (queue.Queue, error) {
 	if cfg == nil {
-		return nil, fmt.Errorf("%w: config is nil", queue.ErrInvalidMessage)
+		return nil, fmt.Errorf("%w: config is nil", queue.ErrInvalidConfig)
 	}
 
 	rCfg := cfg.Queue.Redis
@@ -148,7 +146,7 @@ func (q *RedisQueue) Stats(ctx context.Context) (queue.Stats, error) {
 	}
 
 	var ready int64
-	var inFlight = atomic.LoadInt64(&q.inFlight)
+	var inFlight = q.InFlight
 
 	switch q.mode {
 	case "stream":
@@ -171,13 +169,14 @@ func (q *RedisQueue) Stats(ctx context.Context) (queue.Stats, error) {
 		}
 	}
 
+	_, totalSent, consumers := q.Snapshot()
 	return queue.Stats{
 		Driver:    config.DriverRedis,
 		Name:      q.rCfg.Key,
 		Ready:     ready,
 		InFlight:  inFlight,
-		Total:     atomic.LoadInt64(&q.totalSent),
-		Consumers: int(atomic.LoadInt64(&q.activeCons)),
+		Total:     totalSent,
+		Consumers: consumers,
 		Extra: map[string]any{
 			"mode":  q.mode,
 			"group": q.rCfg.Group,
@@ -292,7 +291,7 @@ func (p *redisProducer) Publish(ctx context.Context, msg *queue.Message, opts ..
 		return fmt.Errorf("%w: %v", queue.ErrPublishFailed, err)
 	}
 
-	atomic.AddInt64(&p.q.totalSent, 1)
+	p.q.IncTotalSent(1)
 	return nil
 }
 
@@ -335,8 +334,8 @@ func (c *redisConsumer) Consume(ctx context.Context, handler queue.Handler, opts
 		finalHandler = queue.Chain(co.Middlewares...)(handler)
 	}
 
-	atomic.AddInt64(&c.q.activeCons, int64(concurrency))
-	defer atomic.AddInt64(&c.q.activeCons, -int64(concurrency))
+	c.q.IncActiveCons(concurrency)
+	defer c.q.DecActiveCons(concurrency)
 
 	switch c.q.mode {
 	case "stream":
@@ -374,6 +373,7 @@ func (c *redisConsumer) consumeStream(ctx context.Context, handler queue.Handler
 	}
 
 	var wg sync.WaitGroup
+	backoff := common.NewBackoff(100*time.Millisecond, 5*time.Second)
 	for i := 0; i < concurrency; i++ {
 		workerID := fmt.Sprintf("%s-%d", c.q.rCfg.Consumer, i)
 		if c.q.rCfg.Consumer == "" {
@@ -401,7 +401,9 @@ func (c *redisConsumer) consumeStream(ctx context.Context, handler queue.Handler
 					if errorsIsRedisNil(err) || ctx.Err() != nil {
 						continue
 					}
-					time.Sleep(100 * time.Millisecond)
+					if !backoff.Wait(ctx) {
+						return
+					}
 					continue
 				}
 
@@ -419,8 +421,8 @@ func (c *redisConsumer) consumeStream(ctx context.Context, handler queue.Handler
 }
 
 func (c *redisConsumer) processStreamMessage(ctx context.Context, stream, group string, xmsg redis.XMessage, handler queue.Handler, co queue.ConsumeOptions) {
-	atomic.AddInt64(&c.q.inFlight, 1)
-	defer atomic.AddInt64(&c.q.inFlight, -1)
+	c.q.IncInFlight()
+	defer c.q.DecInFlight()
 
 	var qMsg *queue.Message
 	if raw, ok := xmsg.Values["data"].(string); ok && raw != "" {
@@ -486,6 +488,7 @@ func (c *redisConsumer) consumeList(ctx context.Context, handler queue.Handler, 
 	}
 
 	var wg sync.WaitGroup
+	listBackoff := common.NewBackoff(100*time.Millisecond, 5*time.Second)
 	for i := 0; i < concurrency; i++ {
 		wg.Add(1)
 		go func() {
@@ -502,7 +505,9 @@ func (c *redisConsumer) consumeList(ctx context.Context, handler queue.Handler, 
 					if errorsIsRedisNil(err) || ctx.Err() != nil {
 						continue
 					}
-					time.Sleep(100 * time.Millisecond)
+					if !listBackoff.Wait(ctx) {
+						return
+					}
 					continue
 				}
 
@@ -521,8 +526,8 @@ func (c *redisConsumer) consumeList(ctx context.Context, handler queue.Handler, 
 }
 
 func (c *redisConsumer) processListMessage(ctx context.Context, key, rawData string, handler queue.Handler, co queue.ConsumeOptions) {
-	atomic.AddInt64(&c.q.inFlight, 1)
-	defer atomic.AddInt64(&c.q.inFlight, -1)
+	c.q.IncInFlight()
+	defer c.q.DecInFlight()
 
 	var env redisMessageEnvelope
 	var qMsg *queue.Message

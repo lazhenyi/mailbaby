@@ -8,10 +8,10 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"mailbaby/internal/config"
 	"mailbaby/internal/queue"
+	"mailbaby/internal/queue/driver/common"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -22,21 +22,19 @@ func init() {
 
 // RabbitMQQueue implements queue.Queue for RabbitMQ (AMQP 0-9-1).
 type RabbitMQQueue struct {
-	cfg        *config.Config
-	rCfg       config.RabbitMQConfig
-	conn       *amqp.Connection
-	ch         *amqp.Channel
-	mu         sync.RWMutex
-	closed     bool
-	inFlight   int64
-	totalSent  int64
-	activeCons int64
+	cfg    *config.Config
+	rCfg   config.RabbitMQConfig
+	conn   *amqp.Connection
+	ch     *amqp.Channel
+	mu     sync.RWMutex
+	closed bool
+	common.BaseStats
 }
 
 // New creates and initializes a new RabbitMQ Queue instance.
 func New(cfg *config.Config) (queue.Queue, error) {
 	if cfg == nil {
-		return nil, fmt.Errorf("%w: config is nil", queue.ErrInvalidMessage)
+		return nil, fmt.Errorf("%w: config is nil", queue.ErrInvalidConfig)
 	}
 
 	rCfg := cfg.Queue.RabbitMQ
@@ -225,22 +223,24 @@ func (q *RabbitMQQueue) Stats(ctx context.Context) (queue.Stats, error) {
 
 	info, err := q.ch.QueueDeclarePassive(q.rCfg.Queue, false, false, false, false, nil)
 	if err != nil {
+		_, totalSent, consumers := q.Snapshot()
 		return queue.Stats{
 			Driver:    config.DriverRabbitMQ,
 			Name:      q.rCfg.Queue,
-			Consumers: int(atomic.LoadInt64(&q.activeCons)),
-			InFlight:  atomic.LoadInt64(&q.inFlight),
-			Total:     atomic.LoadInt64(&q.totalSent),
+			Consumers: consumers,
+			InFlight:  q.InFlight,
+			Total:     totalSent,
 		}, nil
 	}
 
+	_, totalSent2, _ := q.Snapshot()
 	return queue.Stats{
 		Driver:    config.DriverRabbitMQ,
 		Name:      q.rCfg.Queue,
 		Ready:     int64(info.Messages),
 		Consumers: info.Consumers,
-		InFlight:  atomic.LoadInt64(&q.inFlight),
-		Total:     atomic.LoadInt64(&q.totalSent),
+		InFlight:  q.InFlight,
+		Total:     totalSent2,
 		Extra: map[string]any{
 			"exchange": q.rCfg.Exchange,
 			"vhost":    q.rCfg.VHost,
@@ -341,7 +341,7 @@ func (p *rabbitProducer) Publish(ctx context.Context, msg *queue.Message, opts .
 		return fmt.Errorf("%w: %v", queue.ErrPublishFailed, err)
 	}
 
-	atomic.AddInt64(&p.q.totalSent, 1)
+	p.q.IncTotalSent(1)
 	return nil
 }
 
@@ -425,8 +425,8 @@ func (c *rabbitConsumer) Consume(ctx context.Context, handler queue.Handler, opt
 		finalHandler = queue.Chain(co.Middlewares...)(handler)
 	}
 
-	atomic.AddInt64(&c.q.activeCons, int64(concurrency))
-	defer atomic.AddInt64(&c.q.activeCons, -int64(concurrency))
+	c.q.IncActiveCons(concurrency)
+	defer c.q.DecActiveCons(concurrency)
 
 	var wg sync.WaitGroup
 	for i := 0; i < concurrency; i++ {
@@ -452,8 +452,8 @@ func (c *rabbitConsumer) Consume(ctx context.Context, handler queue.Handler, opt
 }
 
 func (c *rabbitConsumer) processDelivery(ctx context.Context, d amqp.Delivery, handler queue.Handler, co queue.ConsumeOptions) {
-	atomic.AddInt64(&c.q.inFlight, 1)
-	defer atomic.AddInt64(&c.q.inFlight, -1)
+	c.q.IncInFlight()
+	defer c.q.DecInFlight()
 
 	headers := make(map[string]string, len(d.Headers))
 	for k, v := range d.Headers {

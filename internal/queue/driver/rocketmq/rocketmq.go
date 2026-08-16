@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"mailbaby/internal/config"
 	"mailbaby/internal/queue"
+	"mailbaby/internal/queue/driver/common"
 
 	"github.com/apache/rocketmq-client-go/v2"
 	"github.com/apache/rocketmq-client-go/v2/consumer"
@@ -22,14 +22,12 @@ func init() {
 
 // RocketMQQueue implements queue.Queue for Apache RocketMQ.
 type RocketMQQueue struct {
-	cfg        *config.Config
-	rCfg       config.RocketMQConfig
-	producer   rocketmq.Producer
-	closed     bool
-	mu         sync.RWMutex
-	inFlight   int64
-	totalSent  int64
-	activeCons int64
+	cfg      *config.Config
+	rCfg     config.RocketMQConfig
+	producer rocketmq.Producer
+	closed   bool
+	mu       sync.RWMutex
+	common.BaseStats
 }
 
 // New creates and initializes a new RocketMQ Queue instance.
@@ -125,12 +123,13 @@ func (q *RocketMQQueue) Stats(ctx context.Context) (queue.Stats, error) {
 		return queue.Stats{}, queue.ErrQueueClosed
 	}
 
+	_, totalSent, consumers := q.Snapshot()
 	return queue.Stats{
 		Driver:    config.DriverRocketMQ,
 		Name:      q.rCfg.Topic,
-		InFlight:  atomic.LoadInt64(&q.inFlight),
-		Total:     atomic.LoadInt64(&q.totalSent),
-		Consumers: int(atomic.LoadInt64(&q.activeCons)),
+		InFlight:  q.InFlight,
+		Total:     totalSent,
+		Consumers: consumers,
 		Extra: map[string]any{
 			"group":        q.rCfg.Group,
 			"name_servers": q.rCfg.NameServers,
@@ -191,7 +190,7 @@ func (p *rmqProducer) Publish(ctx context.Context, msg *queue.Message, opts ...q
 		return fmt.Errorf("%w: %v", queue.ErrPublishFailed, err)
 	}
 
-	atomic.AddInt64(&p.q.totalSent, 1)
+	p.q.IncTotalSent(1)
 	return nil
 }
 
@@ -267,13 +266,13 @@ func (c *rmqConsumer) Consume(ctx context.Context, handler queue.Handler, opts .
 		finalHandler = queue.Chain(co.Middlewares...)(handler)
 	}
 
-	atomic.AddInt64(&c.q.activeCons, 1)
-	defer atomic.AddInt64(&c.q.activeCons, -1)
+	c.q.IncActiveCons(1)
+	defer c.q.DecActiveCons(1)
 
 	err = pushCons.Subscribe(topic, consumer.MessageSelector{}, func(cctx context.Context, msgs ...*primitive.MessageExt) (consumer.ConsumeResult, error) {
 		for _, ext := range msgs {
-			atomic.AddInt64(&c.q.inFlight, 1)
-			defer atomic.AddInt64(&c.q.inFlight, -1)
+			c.q.IncInFlight()
+			defer c.q.DecInFlight()
 
 			qMsg := &queue.Message{
 				ID:        ext.MsgId,

@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"mailbaby/internal/config"
 	"mailbaby/internal/queue"
+	"mailbaby/internal/queue/driver/common"
 
 	"github.com/apache/pulsar-client-go/pulsar"
 )
@@ -20,20 +20,18 @@ func init() {
 
 // PulsarQueue implements queue.Queue for Apache Pulsar.
 type PulsarQueue struct {
-	cfg        *config.Config
-	pCfg       config.PulsarConfig
-	client     pulsar.Client
-	closed     bool
-	mu         sync.RWMutex
-	inFlight   int64
-	totalSent  int64
-	activeCons int64
+	cfg    *config.Config
+	pCfg   config.PulsarConfig
+	client pulsar.Client
+	closed bool
+	mu     sync.RWMutex
+	common.BaseStats
 }
 
 // New creates and initializes a new Apache Pulsar Queue instance.
 func New(cfg *config.Config) (queue.Queue, error) {
 	if cfg == nil {
-		return nil, fmt.Errorf("%w: config is nil", queue.ErrInvalidMessage)
+		return nil, fmt.Errorf("%w: config is nil", queue.ErrInvalidConfig)
 	}
 
 	pCfg := cfg.Queue.Pulsar
@@ -152,12 +150,13 @@ func (q *PulsarQueue) Stats(ctx context.Context) (queue.Stats, error) {
 		return queue.Stats{}, queue.ErrQueueClosed
 	}
 
+	_, totalSent, consumers := q.Snapshot()
 	return queue.Stats{
 		Driver:    config.DriverPulsar,
 		Name:      q.pCfg.Topic,
-		InFlight:  atomic.LoadInt64(&q.inFlight),
-		Total:     atomic.LoadInt64(&q.totalSent),
-		Consumers: int(atomic.LoadInt64(&q.activeCons)),
+		InFlight:  q.InFlight,
+		Total:     totalSent,
+		Consumers: consumers,
 		Extra: map[string]any{
 			"subscription":      q.pCfg.SubscriptionName,
 			"subscription_type": q.pCfg.SubscriptionType,
@@ -231,7 +230,7 @@ func (p *pulsarProducer) Publish(ctx context.Context, msg *queue.Message, opts .
 		return fmt.Errorf("%w: %v", queue.ErrPublishFailed, err)
 	}
 
-	atomic.AddInt64(&p.q.totalSent, 1)
+	p.q.IncTotalSent(1)
 	return nil
 }
 
@@ -281,8 +280,10 @@ func (c *pulsarConsumer) Consume(ctx context.Context, handler queue.Handler, opt
 		concurrency = c.q.cfg.Queue.Concurrency
 	}
 
-	atomic.AddInt64(&c.q.activeCons, int64(concurrency))
-	defer atomic.AddInt64(&c.q.activeCons, -int64(concurrency))
+	c.q.IncActiveCons(concurrency)
+	defer c.q.DecActiveCons(concurrency)
+
+	backoff := common.NewBackoff(100*time.Millisecond, 5*time.Second)
 
 	var wg sync.WaitGroup
 	for i := 0; i < concurrency; i++ {
@@ -301,7 +302,9 @@ func (c *pulsarConsumer) Consume(ctx context.Context, handler queue.Handler, opt
 					if ctx.Err() != nil {
 						return
 					}
-					time.Sleep(100 * time.Millisecond)
+					if !backoff.Wait(ctx) {
+						return
+					}
 					continue
 				}
 
@@ -315,8 +318,8 @@ func (c *pulsarConsumer) Consume(ctx context.Context, handler queue.Handler, opt
 }
 
 func (c *pulsarConsumer) processMessage(ctx context.Context, pMsg pulsar.Message, handler queue.Handler, co queue.ConsumeOptions) {
-	atomic.AddInt64(&c.q.inFlight, 1)
-	defer atomic.AddInt64(&c.q.inFlight, -1)
+	c.q.IncInFlight()
+	defer c.q.DecInFlight()
 
 	props := pMsg.Properties()
 	msgID := ""

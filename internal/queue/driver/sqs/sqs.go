@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"mailbaby/internal/config"
 	"mailbaby/internal/queue"
+	"mailbaby/internal/queue/driver/common"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -24,20 +24,18 @@ func init() {
 
 // SQSQueue implements queue.Queue for AWS SQS.
 type SQSQueue struct {
-	cfg        *config.Config
-	sCfg       config.SQSConfig
-	client     *sqs.Client
-	closed     bool
-	mu         sync.RWMutex
-	inFlight   int64
-	totalSent  int64
-	activeCons int64
+	cfg    *config.Config
+	sCfg   config.SQSConfig
+	client *sqs.Client
+	closed bool
+	mu     sync.RWMutex
+	common.BaseStats
 }
 
 // New creates and initializes a new AWS SQS Queue instance.
 func New(cfg *config.Config) (queue.Queue, error) {
 	if cfg == nil {
-		return nil, fmt.Errorf("%w: config is nil", queue.ErrInvalidMessage)
+		return nil, fmt.Errorf("%w: config is nil", queue.ErrInvalidConfig)
 	}
 
 	sCfg := cfg.Queue.SQS
@@ -142,9 +140,9 @@ func (q *SQSQueue) Stats(ctx context.Context) (queue.Stats, error) {
 		return queue.Stats{
 			Driver:    config.DriverSQS,
 			Name:      q.sCfg.QueueURL,
-			InFlight:  atomic.LoadInt64(&q.inFlight),
-			Total:     atomic.LoadInt64(&q.totalSent),
-			Consumers: int(atomic.LoadInt64(&q.activeCons)),
+			InFlight:  q.InFlight,
+			Total:     q.TotalSent,
+			Consumers: int(q.ActiveCons),
 		}, nil
 	}
 
@@ -165,8 +163,8 @@ func (q *SQSQueue) Stats(ctx context.Context) (queue.Stats, error) {
 		Ready:     ready,
 		InFlight:  inFlight,
 		Delayed:   delayed,
-		Total:     atomic.LoadInt64(&q.totalSent),
-		Consumers: int(atomic.LoadInt64(&q.activeCons)),
+		Total:     q.TotalSent,
+		Consumers: int(q.ActiveCons),
 		Extra: map[string]any{
 			"region": q.sCfg.Region,
 		},
@@ -245,7 +243,7 @@ func (p *sqsProducer) Publish(ctx context.Context, msg *queue.Message, opts ...q
 		return fmt.Errorf("%w: %v", queue.ErrPublishFailed, err)
 	}
 
-	atomic.AddInt64(&p.q.totalSent, 1)
+	p.q.IncTotalSent(1)
 	return nil
 }
 
@@ -314,8 +312,10 @@ func (c *sqsConsumer) Consume(ctx context.Context, handler queue.Handler, opts .
 		finalHandler = queue.Chain(co.Middlewares...)(handler)
 	}
 
-	atomic.AddInt64(&c.q.activeCons, int64(concurrency))
-	defer atomic.AddInt64(&c.q.activeCons, -int64(concurrency))
+	c.q.IncActiveCons(concurrency)
+	defer c.q.DecActiveCons(concurrency)
+
+	backoff := common.NewBackoff(200*time.Millisecond, 5*time.Second)
 
 	var wg sync.WaitGroup
 	for i := 0; i < concurrency; i++ {
@@ -341,7 +341,9 @@ func (c *sqsConsumer) Consume(ctx context.Context, handler queue.Handler, opts .
 					if ctx.Err() != nil {
 						return
 					}
-					time.Sleep(200 * time.Millisecond)
+					if !backoff.Wait(ctx) {
+						return
+					}
 					continue
 				}
 
@@ -357,8 +359,8 @@ func (c *sqsConsumer) Consume(ctx context.Context, handler queue.Handler, opts .
 }
 
 func (c *sqsConsumer) processMessage(ctx context.Context, queueURL string, sqsMsg types.Message, handler queue.Handler, co queue.ConsumeOptions) {
-	atomic.AddInt64(&c.q.inFlight, 1)
-	defer atomic.AddInt64(&c.q.inFlight, -1)
+	c.q.IncInFlight()
+	defer c.q.DecInFlight()
 
 	headers := make(map[string]string)
 	for k, v := range sqsMsg.MessageAttributes {

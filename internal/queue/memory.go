@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"mailbaby/internal/config"
+	"mailbaby/internal/logger"
 	"mailbaby/internal/metrics"
 	"mailbaby/internal/tracing"
 )
@@ -48,6 +49,8 @@ type MemoryQueue struct {
 	consumersTotal int64
 	inFlight       int64
 	totalPublished int64
+
+	delayedWg sync.WaitGroup
 }
 
 // NewMemoryQueue constructs an in-memory queue instance.
@@ -125,15 +128,60 @@ func (q *MemoryQueue) Stats(ctx context.Context) (Stats, error) {
 	}, nil
 }
 
-// Close closes the MemoryQueue.
+// Close closes the MemoryQueue. It blocks until in-flight messages have
+// been processed by their handlers (bounded by a configurable timeout) so
+// callers do not lose work mid-flight.
 func (q *MemoryQueue) Close() error {
 	q.closeOnce.Do(func() {
 		q.mu.Lock()
 		q.closed = true
 		close(q.ch)
+		drainTimeout := drainTimeoutFromConfig(q.cfg)
 		q.mu.Unlock()
+		q.drain(drainTimeout)
+		// Wait for delayed-publish goroutines to settle or exit on ctx cancel.
+		delayedDone := make(chan struct{})
+		go func() {
+			q.delayedWg.Wait()
+			close(delayedDone)
+		}()
+		select {
+		case <-delayedDone:
+		case <-time.After(drainTimeout):
+			logger.Get().WithFields(logger.Fields{
+				"queue": q.name,
+			}).Warn("memory queue: delayed publishes did not finish before drain timeout")
+		}
 	})
 	return nil
+}
+
+// drain waits until q.inFlight reaches zero or the timeout expires.
+func (q *MemoryQueue) drain(timeout time.Duration) {
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	deadline := time.Now().Add(timeout)
+	for atomic.LoadInt64(&q.inFlight) > 0 {
+		if time.Now().After(deadline) {
+			logger.Get().WithFields(logger.Fields{
+				"queue":    q.name,
+				"in_flight": atomic.LoadInt64(&q.inFlight),
+			}).Warn("memory queue: drain timed out, closing with in-flight messages")
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func drainTimeoutFromConfig(cfg *config.Config) time.Duration {
+	if cfg == nil {
+		return 30 * time.Second
+	}
+	if cfg.Queue.DrainTimeout > 0 {
+		return cfg.Queue.DrainTimeout
+	}
+	return 30 * time.Second
 }
 
 type memoryProducer struct {
@@ -201,11 +249,21 @@ func (p *memoryProducer) Publish(ctx context.Context, msg *Message, opts ...Publ
 	}
 
 	if msg.Delay > 0 {
+		p.q.delayedWg.Add(1)
 		go func(m *Message, delay time.Duration) {
+			defer p.q.delayedWg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					logger.Get().WithField("panic", fmt.Sprintf("%v", r)).Error("memory queue delay publish panic recovered")
+				}
+			}()
+			timer := time.NewTimer(delay)
+			defer timer.Stop()
 			select {
-			case <-time.After(delay):
+			case <-timer.C:
 				_ = publishItem(m)
 			case <-ctx.Done():
+				return
 			}
 		}(msg.Clone(), msg.Delay)
 		return nil
@@ -256,6 +314,7 @@ func (c *memoryConsumer) Consume(ctx context.Context, handler Handler, opts ...C
 	atomic.AddInt64(&c.q.consumersTotal, int64(concurrency))
 	defer atomic.AddInt64(&c.q.consumersTotal, -int64(concurrency))
 
+	drainTimeout := drainTimeoutFromConfig(c.q.cfg)
 	var wg sync.WaitGroup
 	for i := 0; i < concurrency; i++ {
 		wg.Add(1)
@@ -276,6 +335,7 @@ func (c *memoryConsumer) Consume(ctx context.Context, handler Handler, opts ...C
 	}
 
 	wg.Wait()
+	c.q.drain(drainTimeout)
 	return nil
 }
 
